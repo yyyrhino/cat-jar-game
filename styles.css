@@ -1,0 +1,118 @@
+:root {
+  color-scheme: dark;
+  --black: #000000;
+  --blue: #38baeb;
+  --purple: #5c33fd;
+  --pale: #c0f1fc;
+  font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  color: var(--pale);
+  background: var(--black);
+  font-synthesis: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-width: 320px; min-height: 100%; background: var(--black); }
+body { min-height: 100svh; }
+button { font: inherit; }
+.game {
+  width: min(1120px, calc(100% - 96px));
+  min-height: 100svh;
+  margin-inline: auto;
+  padding-block: clamp(48px, 12svh, 128px) 38px;
+  display: flex;
+  flex-direction: column;
+}
+.hud { display: flex; align-items: center; gap: 48px; padding-inline: 12px; }
+.affection { display: flex; align-items: center; flex: 1; min-width: 0; gap: 22px; }
+.heart { width: 46px; height: 44px; flex: none; overflow: visible; }
+.heart path { fill: var(--black); stroke: var(--purple); stroke-width: 4; stroke-linejoin: round; }
+.affection-track {
+  height: 25px;
+  flex: 1;
+  border: 4px solid var(--purple);
+  border-radius: 999px;
+  padding: 3px;
+  overflow: hidden;
+}
+.affection-fill { width: 0; height: 100%; border-radius: inherit; background: var(--blue); }
+.reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--pale);
+  background: transparent;
+  cursor: pointer;
+  transition: color 160ms, transform 160ms;
+}
+.reset svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.reset:hover:not(:disabled) { color: var(--purple); }
+.reset:active:not(:disabled) { transform: translateY(1px) scale(.98); }
+.reset:focus-visible { outline: 2px solid var(--pale); outline-offset: 6px; }
+.reset:disabled { opacity: .45; cursor: wait; }
+.stage { height: clamp(380px, 62svh, 590px); width: 100%; position: relative; margin-top: 24px; touch-action: none; }
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.loading { position: absolute; inset: 48% 12px auto; text-align: center; font-size: 14px; color: var(--pale); margin: 0; }
+.loading[hidden] { display: none; }
+.hint { margin: 18px 0 0; text-align: center; font-size: 13px; line-height: 1.8; letter-spacing: .14em; color: #86a9b1; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+noscript { text-align: center; font-size: 14px; }
+@media (max-width: 700px) {
+  .game { width: calc(100% - 36px); padding-top: max(40px, 9svh); padding-bottom: max(30px, env(safe-area-inset-bottom)); }
+  .hud { padding-inline: 0; gap: 18px; }
+  .affection { gap: 12px; }
+  .heart { width: 32px; height: 33px; }
+  .affection-track { height: 20px; border-width: 3px; padding: 3px; }
+  .reset svg { width: 16px; height: 16px; }
+  .stage { height: clamp(320px, 58svh, 490px); margin-top: 20px; }
+  .hint { margin-top: 16px; font-size: 12px; letter-spacing: .08em; }
+}
+@media (max-height: 520px) and (min-width: 600px) {
+  .game { padding-top: 24px; padding-bottom: 20px; }
+  .stage { height: clamp(220px, calc(100svh - 125px), 290px); margin-top: 4px; }
+  .hint { margin-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .reset { transition: none; } }
+
+/* A lightweight glove overlay: pointer input still reaches the 3D scene. */
+.hand-cursor {
+  position: fixed;
+  inset: 0 auto auto 0;
+  z-index: 20;
+  width: 100px;
+  aspect-ratio: 140 / 136;
+  pointer-events: none;
+  user-select: none;
+  contain: layout style size;
+  will-change: transform;
+}
+.hand-cursor[hidden] { display: none; }
+.hand-anchor {
+  width: 100%;
+  height: 100%;
+  /* (13.04, 99.51) is the fingertip after rotating the SVG artwork. */
+  transform: translate(-17.89%, -75.38%);
+}
+.hand-pose {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform-origin: 17.89% 75.38%;
+}
+.hand-cursor.is-petting .hand-pose { animation: glove-stroke 620ms ease-in-out infinite; }
+@keyframes glove-stroke {
+  0%, 100% { transform: translate(-4px, -1px) rotate(-5deg); }
+  50% { transform: translate(4px, 2px) rotate(4deg); }
+}
+@media (max-width: 700px) {
+  .hand-cursor { width: 64px; }
+}
+.hand-cursor[data-pointer-type="touch"] { width: 64px; }
+@media (prefers-reduced-motion: reduce) {
+  .hand-cursor.is-petting .hand-pose { animation: none; transform: rotate(-4deg); }
+}
