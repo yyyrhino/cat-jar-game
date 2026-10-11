@@ -1,6 +1,7 @@
 import * as T from './vendor/three.module.js';
-import { createPeekGame } from './gameplay.js';
+import { createPeekGame } from './gameplay.js?v=0.3.0';
 import { createHandCursor } from './hand.js';
+import { createFinaleLight } from './finale.js?v=0.3.0';
 
 // The scene deliberately keeps the approved cat and the enlarged jar opening.
 // Colors are unlit, so these values remain the visual identity of the game.
@@ -30,6 +31,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   canvas.setAttribute('role', 'img');
   container.appendChild(canvas);
   const hand = createHandCursor(container);
+  const finaleLight = createFinaleLight(container);
+  const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
 
   const camera = new T.OrthographicCamera(-6.9, 6.9, 2.6, -2.6, 0.1, 40);
   const pitch = 0.105;
@@ -88,7 +91,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   // Back-face hulls create real depth-tested contours, not a flat glow effect.
   // The cat's extrusion fades at the lip, preventing an artificial purple collar.
   function outline(sourceGeometry, { cat = false } = {}) {
-    const uniforms = { thickness: { value: outlineWidth }, lipHeight: { value: rimY } };
+    const uniforms = { thickness: { value: outlineWidth }, lipHeight: { value: rimY }, isCat: cat };
     const hullMaterial = basic(PALETTE.outline, { side: T.BackSide });
     hullMaterial.onBeforeCompile = (shader) => {
       shader.uniforms.outlineThickness = uniforms.thickness;
@@ -131,11 +134,13 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   const rimGeometry = geometry(new T.TorusGeometry(.878, 1, 10, 128));
   // Torus tube thickness is rebuilt on resize because its world thickness tracks pixels.
   const jars = [];
+  const jarGroups = [];
   const rimLines = [];
   for (const x of [-3.7, 0, 3.7]) {
     const group = new T.Group();
     group.position.x = x;
     scene.add(group);
+    jarGroups.push(group);
     const jar = new T.Mesh(jarGeometry, jarMaterial);
     jar.name = x === 0 ? 'center-jar' : x < 0 ? 'left-jar' : 'right-jar';
     group.add(jar, outline(exteriorGeometry));
@@ -153,7 +158,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   scene.add(cat);
   const parts = [];
   const black = basic(PALETTE.cat);
+  const pupilMaterial = basic(PALETTE.cat);
   const eyeMaterial = basic(PALETTE.eyes);
+  const lightColor = new T.Color('#C0F0FB');
   const profile = [[0, .39], [.04, .50], [.13, .64], [.32, .77], [.60, .83], [.87, .82], [1.15, .77], [1.44, .69], [1.72, .65], [1.97, .65], [2.13, .60], [2.25, .49], [2.34, .32], [2.39, .12], [2.40, 0]];
   function radiusAt(y) {
     if (y <= 0) return profile[0][1];
@@ -235,7 +242,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       const a = 1 + ring * segments + j, b = 1 + ring * segments + (j + 1) % segments, c = a + segments, d = b + segments;
       indices.push(a, c, b, b, c, d);
     }
-    const part = addPart(`${pupil ? 'pupil' : 'eye'}-${side}`, points, indices, pupil ? black : eyeMaterial);
+    const part = addPart(`${pupil ? 'pupil' : 'eye'}-${side}`, points, indices, pupil ? pupilMaterial : eyeMaterial);
     part.closed = new Float32Array(closed);
     part.pupil = pupil;
   }
@@ -250,12 +257,54 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   let wallExcess = -Infinity;
   let last = performance.now();
   let paused = document.hidden;
+  const isFinalePhase = (phase) => phase === 'celebrating' || phase === 'returning';
+  const isFinale = () => isFinalePhase(peek.phase);
+
+  function syncFinaleLight() {
+    scene.updateMatrixWorld();
+    const rect = canvas.getBoundingClientRect();
+    const projectEye = (part, index) => {
+      const p = new T.Vector3().fromBufferAttribute(part.geometry.attributes.position, index);
+      cat.localToWorld(p).project(camera);
+      return { x: rect.left + (p.x + 1) * rect.width / 2, y: rect.top + (1 - p.y) * rect.height / 2 };
+    };
+    const eyes = peek.phase === 'celebrating' ? parts.filter((part) => part.closed && !part.pupil).map((part) => {
+      const center = projectEye(part, 0);
+      const ring = 1 + 15 * 64;
+      const left = projectEye(part, ring + 32), right = projectEye(part, ring);
+      const top = projectEye(part, ring + 16), bottom = projectEye(part, ring + 48);
+      return { ...center, width: Math.hypot(right.x - left.x, right.y - left.y), height: Math.hypot(bottom.x - top.x, bottom.y - top.y) };
+    }) : [];
+    finaleLight.update({ phase: peek.phase, elapsed: peek.elapsed, eyes, reducedMotion: motionPreference.matches });
+  }
 
   function deform() {
     visibleCompression = 0;
     wallExcess = -Infinity;
-    cat.visible = peek.phase !== 'hidden';
-    cat.position.x = [-3.7, 0, 3.7][Math.max(0, peek.jar)];
+    const celebrating = peek.phase === 'celebrating';
+    const t = celebrating ? peek.elapsed : 0;
+    const travel = ease((t - .72) / .70);
+    const departure = ease((t - .18) / .95);
+    const lift = 1.85 * ease(t / .72);
+    const centerY = catBase + 1.20;
+    const finalScale = clamp(worldHeight * .36 / 2.4, 1.1, 2.3);
+    const scale = lerp(1, finalScale, travel);
+    // Leave the opening vertically before crossing towards the middle jar.
+    // All fitting below is evaluated relative to the departing jar's cavity.
+    const bob = motionPreference.matches ? 0 : Math.sin(Math.max(0, t - 1.42) * 2.6) * .04;
+    cat.visible = peek.phase !== 'hidden' && peek.phase !== 'returning';
+    cat.position.set([-3.7, 0, 3.7][Math.max(0, peek.jar)] * (1 - travel),
+      lerp(lift, worldHeight * .43 / Math.cos(pitch) - centerY, travel) + bob, 0);
+    for (let i = 0; i < jarGroups.length; i++) {
+      const group = jarGroups[i];
+      group.position.set([-3.7, 0, 3.7][i], -departure * (worldHeight + 3), 0);
+      group.visible = departure < 1;
+    }
+    const jarY = -departure * (worldHeight + 3);
+    for (const uniforms of outlines) if (uniforms.isCat) uniforms.lipHeight.value = rimY + jarY - cat.position.y;
+    const eyeGlow = celebrating ? ease((t - 1.2) / .85) : 0;
+    pupilMaterial.color.set(PALETTE.cat).lerp(lightColor, eyeGlow);
+    eyeMaterial.color.set(PALETTE.eyes).lerp(lightColor, eyeGlow);
     for (const part of parts) {
       const positions = part.geometry.attributes.position;
       if (part.pupil) part.mesh.visible = enjoy < .72;
@@ -265,13 +314,21 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
         const y = blend(1) + catBase;
         // A soft vertical compression keeps the entire hidden cat above the floor.
         // Collision fitting happens in jar-local space, before moving between jars.
-        const py = .22 + (y - .22) * lerp(.54, 1, peek.progress);
-        const radius = Math.hypot(px, pz), fitted = fittedRadius(radius, py), factor = radius > 0 ? fitted / radius : 1;
+        let py = .22 + (y - .22) * lerp(.54, 1, peek.progress);
+        if (celebrating) {
+          // A mild stretch on departure settles back into the approved silhouette.
+          const stretch = motionPreference.matches ? 0 : Math.sin(Math.PI * clamp(t / .72, 0, 1)) * .12;
+          py = centerY + (py - centerY) * scale * (1 + stretch);
+          px *= scale / Math.sqrt(1 + stretch);
+          pz *= scale / Math.sqrt(1 + stretch);
+        }
+        const cavityY = py + cat.position.y - jarY;
+        const radius = Math.hypot(px, pz), fitted = fittedRadius(radius, cavityY), factor = radius > 0 ? fitted / radius : 1;
         px *= factor; pz *= factor;
         positions.array[i] = px;
         positions.array[i + 1] = py;
         positions.array[i + 2] = pz;
-        if (py <= rimY) wallExcess = Math.max(wallExcess, Math.hypot(px, pz) - cavityRadius(py));
+        if (cavityY <= rimY) wallExcess = Math.max(wallExcess, Math.hypot(px, pz) - cavityRadius(cavityY));
         else visibleCompression = Math.max(visibleCompression, radius - fitted);
       }
       positions.needsUpdate = true;
@@ -279,6 +336,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       part.geometry.computeBoundingSphere();
     }
     container.dataset.wallExcess = Number.isFinite(wallExcess) ? wallExcess.toFixed(5) : 'clear';
+    syncFinaleLight();
   }
 
   const raycaster = new T.Raycaster(), pointer = new T.Vector2();
@@ -300,7 +358,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   function syncHand() {
     const rect = canvas.getBoundingClientRect();
-    const visible = Boolean(pointerPosition && alive && !disposed && !paused
+    const visible = Boolean(pointerPosition && alive && !disposed && !paused && !isFinale()
       && pointerPosition.clientX >= rect.left && pointerPosition.clientX <= rect.right
       && pointerPosition.clientY >= rect.top && pointerPosition.clientY <= rect.bottom);
     const crown = new T.Vector3([-3.7, 0, 3.7][Math.max(0, peek.jar)], catBase + 2.40, .16).project(camera);
@@ -322,6 +380,10 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const previous = peek;
     gameplay.advance(dt);
     peek = gameplay.inspect();
+    if (previous.phase !== peek.phase) {
+      if (peek.phase === 'celebrating') onInteract?.({ type: 'finale-start' });
+      if (peek.phase === 'returning' || (isFinalePhase(previous.phase) && !isFinale())) onInteract?.({ type: 'round-ready' });
+    }
     if (!peek.holding && pointerId !== null) clearCapture();
     if (pointerId !== null && pointerPosition) gameplay.setContact(Boolean(visibleCatHit(pointerPosition)));
     peek = gameplay.inspect();
@@ -329,7 +391,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const previousEnjoy = enjoy;
     enjoy += (target - enjoy) * (1 - Math.exp(-dt * 24));
     if (Math.abs(enjoy - target) < .001) enjoy = target;
-    if (previous.progress !== peek.progress || previous.jar !== peek.jar || previous.phase !== peek.phase || previousEnjoy !== enjoy) dirty = true;
+    if (previous.progress !== peek.progress || previous.jar !== peek.jar || previous.phase !== peek.phase || previousEnjoy !== enjoy || isFinale()) dirty = true;
     container.dataset.phase = peek.phase;
     container.dataset.jar = String(peek.jar);
     container.dataset.interaction = peek.petting ? 'petting' : 'idle';
@@ -338,6 +400,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   function pointerDown(event) {
     if (!alive || paused || pointerId !== null || event.button !== 0) return;
     update();
+    if (isFinale()) return;
     pointerPosition = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
     if (!visibleCatHit(event) || !gameplay.beginPet()) { syncHand(); return; }
     pointerId = event.pointerId;
@@ -439,6 +502,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     alive = false;
     cancelAnimationFrame(animationFrame);
     release();
+    finaleLight.reset();
+    onInteract?.({ type: 'round-ready' });
     container.dataset.ready = 'false';
     container.dataset.error = 'webgl-context-lost';
     onInteract?.({ type: 'error', reason: 'webgl-context-lost' });
@@ -454,6 +519,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     enjoy = 0;
     pointerPosition = null;
     hand.hide();
+    finaleLight.reset();
+    onInteract?.({ type: 'round-ready' });
     last = performance.now();
     container.dataset.phase = 'hidden';
     container.dataset.jar = '-1';
@@ -464,9 +531,16 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   function inspectFit() {
     let excess = -Infinity, lowest = Infinity, highest = -Infinity, samples = 0;
+    const owner = jarGroups[Math.max(0, peek.jar)];
+    const dx = cat.position.x - owner.position.x;
+    const dy = cat.position.y - owner.position.y;
+    const localRim = rimY - dy;
     function sample(x, y, z) {
-      lowest = Math.min(lowest, y); highest = Math.max(highest, y);
-      if (y >= .17 && y <= rimY) { excess = Math.max(excess, Math.hypot(x, z) - cavityRadius(y)); samples++; }
+      lowest = Math.min(lowest, y + cat.position.y); highest = Math.max(highest, y + cat.position.y);
+      const cavityY = y + dy;
+      if (owner.visible && cavityY >= .17 && cavityY <= rimY) {
+        excess = Math.max(excess, Math.hypot(x + dx, z) - cavityRadius(cavityY)); samples++;
+      }
     }
     for (const part of parts) {
       const points = part.geometry.attributes.position.array, indices = part.geometry.index.array;
@@ -476,14 +550,18 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
         sample((points[a] + points[b] + points[c]) / 3, (points[a + 1] + points[b + 1] + points[c + 1]) / 3, (points[a + 2] + points[b + 2] + points[c + 2]) / 3);
         for (const [v, w] of [[a, b], [b, c], [c, a]]) {
           sample((points[v] + points[w]) / 2, (points[v + 1] + points[w + 1]) / 2, (points[v + 2] + points[w + 2]) / 2);
-          if ((points[v + 1] - rimY) * (points[w + 1] - rimY) < 0) {
-            const t = (rimY - points[v + 1]) / (points[w + 1] - points[v + 1]);
-            sample(lerp(points[v], points[w], t), rimY, lerp(points[v + 2], points[w + 2], t));
+          if ((points[v + 1] - localRim) * (points[w + 1] - localRim) < 0) {
+            const t = (localRim - points[v + 1]) / (points[w + 1] - points[v + 1]);
+            sample(lerp(points[v], points[w], t), localRim, lerp(points[v + 2], points[w + 2], t));
           }
         }
       }
     }
-    const screenCenter = new T.Vector3(cat.position.x, .22 + (catBase + 1.95 - .22) * lerp(.54, 1, peek.progress), .5).project(camera);
+    const screenCenter = new T.Vector3();
+    for (const part of parts.filter((item) => item.closed && !item.pupil)) {
+      screenCenter.add(new T.Vector3().fromBufferAttribute(part.geometry.attributes.position, 0));
+    }
+    cat.localToWorld(screenCenter.multiplyScalar(.5)).project(camera);
     return {
       wallExcess: Number.isFinite(excess) ? excess : null,
       visibleCompression, lowest, highest, samples, rimHeight: rimY,
@@ -511,13 +589,16 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     canvas.removeEventListener('webglcontextlost', contextLost);
     window.removeEventListener('blur', loseFocus);
     hand.dispose();
+    finaleLight.dispose();
     for (const value of geometries) value.dispose();
     for (const value of materials) value.dispose();
     renderer.dispose();
     canvas.remove();
     container.dataset.ready = 'false';
   }
-  const api = { reset, dispose, inspectFit, inspectGame: () => ({ ...gameplay.inspect(), enjoy, paused }) };
+  const api = { reset, dispose, inspectFit, inspectGame: () => ({ ...gameplay.inspect(), enjoy, paused,
+    finale: { catVisible: cat.visible, catPosition: cat.position.toArray(), jarsVisible: jarGroups.map((group) => group.visible),
+      jarPositions: jarGroups.map((group) => group.position.toArray()), lightColor: '#C0F0FB' } }) };
   container.dataset.phase = peek.phase;
   container.dataset.jar = String(peek.jar);
   onReady?.({ jarCount: 3, palette: { ...PALETTE } });

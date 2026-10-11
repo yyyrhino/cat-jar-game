@@ -1,4 +1,4 @@
-import { createGameScene } from './scene.js';
+import { createGameScene } from './scene.js?v=0.3.0';
 
 const stage = document.querySelector('#game-stage');
 const resetButton = document.querySelector('.reset');
@@ -6,6 +6,7 @@ const loading = document.querySelector('.loading');
 const announcer = document.querySelector('#announcer');
 const affectionTrack = document.querySelector('.affection-track');
 const affectionFill = document.querySelector('.affection-fill');
+const gameShell = document.querySelector('.game');
 let game;
 let announcementTimer;
 
@@ -28,6 +29,11 @@ try {
     onReady() { loading.hidden = true; resetButton.disabled = false; },
     onAffection: updateAffection,
     onInteract(event) {
+      if (event.type === 'finale-start') {
+        gameShell.classList.add('is-ending');
+        announce('好感满了！小猫飞出罐子，眼睛亮起。');
+      }
+      if (event.type === 'round-ready') gameShell.classList.remove('is-ending');
       if (event.type === 'error') {
         loading.textContent = '画面暂时中断，点击重置重新见到小猫。';
         loading.hidden = false;

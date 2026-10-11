@@ -1,6 +1,7 @@
 // Time is measured in active, foreground seconds. Each peek has a sampled
 // deadline, with one extra second granted by its first successful pet.
 export function createPeekGame({ random = Math.random, onAffection } = {}) {
+  const affectionPerSecond = 20;
   const sample = (min, max) => min + random() * (max - min);
   let phase, elapsed, duration, jar, affection, holding, contact, appearance, extended;
   const history = [];
@@ -11,6 +12,14 @@ export function createPeekGame({ random = Math.random, onAffection } = {}) {
     onAffection?.(0);
   }
   function endPet() { holding = false; contact = false; }
+  function rememberPhase() {
+    history.push({ phase, duration, jar, appearance });
+    if (history.length > 32) history.shift();
+  }
+  function celebrate() {
+    endPet(); phase = 'celebrating'; elapsed = 0; duration = 4.6;
+    rememberPhase();
+  }
   function transition() {
     elapsed = 0;
     if (phase === 'hidden') {
@@ -23,22 +32,30 @@ export function createPeekGame({ random = Math.random, onAffection } = {}) {
       phase = 'waiting'; duration = sample(1.5, 2.5);
     } else if (phase === 'waiting') {
       endPet(); phase = 'retracting'; duration = .15;
+    } else if (phase === 'celebrating') {
+      endPet(); phase = 'returning'; duration = 1.1;
+      jar = -1; affection = 0; appearance = 0; extended = false;
+      onAffection?.(0);
     } else {
       phase = 'hidden'; duration = sample(.5, 3);
     }
-    history.push({ phase, duration, jar, appearance });
-    if (history.length > 32) history.shift();
+    rememberPhase();
   }
   function advance(seconds) {
     if (!Number.isFinite(seconds) || seconds <= 0) return;
     while (seconds > 1e-9) {
-      const step = Math.min(seconds, duration - elapsed);
-      if (phase === 'waiting' && holding && contact && affection < 100) {
-        affection = Math.min(100, affection + step);
+      const petting = phase === 'waiting' && holding && contact;
+      const timeToFull = petting ? (100 - affection) / affectionPerSecond : Infinity;
+      const step = Math.min(seconds, duration - elapsed, timeToFull);
+      // Match the phase-deadline tolerance so rounding cannot retract a full cat.
+      const reachedFull = petting && timeToFull <= step + 1e-9;
+      if (petting) {
+        affection = reachedFull ? 100 : Math.min(100, affection + step * affectionPerSecond);
         onAffection?.(affection);
       }
       elapsed += step; seconds -= step;
-      if (elapsed >= duration - 1e-9) transition();
+      if (reachedFull) celebrate();
+      else if (elapsed >= duration - 1e-9) transition();
     }
   }
   function beginPet() {
@@ -50,7 +67,7 @@ export function createPeekGame({ random = Math.random, onAffection } = {}) {
   function inspect() {
     const t = Math.min(1, elapsed / duration);
     const smooth = t * t * (3 - 2 * t);
-    const progress = phase === 'waiting' ? 1 : phase === 'emerging' ? smooth : phase === 'retracting' ? 1 - smooth : 0;
+    const progress = phase === 'waiting' || phase === 'celebrating' ? 1 : phase === 'emerging' ? smooth : phase === 'retracting' ? 1 - smooth : 0;
     return { phase, elapsed, duration, remaining: duration - elapsed, jar, appearance, extended,
       affection, holding, petting: phase === 'waiting' && holding && contact, progress,
       history: history.map((event) => ({ ...event })) };

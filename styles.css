@@ -59,6 +59,8 @@ button { font: inherit; }
 .loading { position: absolute; inset: 48% 12px auto; text-align: center; font-size: 14px; color: var(--pale); margin: 0; }
 .loading[hidden] { display: none; }
 .hint { margin: 18px 0 0; text-align: center; font-size: 13px; line-height: 1.8; letter-spacing: .14em; color: #86a9b1; }
+.affection, .hint { transition: opacity 450ms ease; }
+.game.is-ending .affection, .game.is-ending .hint { opacity: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 noscript { text-align: center; font-size: 14px; }
 @media (max-width: 700px) {
@@ -76,7 +78,7 @@ noscript { text-align: center; font-size: 14px; }
   .stage { height: clamp(220px, calc(100svh - 125px), 290px); margin-top: 4px; }
   .hint { margin-top: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .reset { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .reset, .affection, .hint { transition: none; } }
 
 /* A lightweight glove overlay: pointer input still reaches the 3D scene. */
 .hand-cursor {

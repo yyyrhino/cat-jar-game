@@ -1,0 +1,49 @@
+.finale-light {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  contain: strict;
+}
+.finale-light[hidden] { display: none; }
+
+.finale-glow {
+  position: absolute;
+  top: -128px;
+  left: -128px;
+  width: 256px;
+  height: 256px;
+  border-radius: 50%;
+  opacity: 0;
+  transform-origin: center;
+  background: radial-gradient(circle closest-side,
+    rgb(192 240 251 / 1) 0%,
+    rgb(192 240 251 / .98) 13%,
+    rgb(192 240 251 / .88) 30%,
+    rgb(192 240 251 / .62) 46%,
+    rgb(192 240 251 / .24) 64%,
+    rgb(192 240 251 / .065) 79%,
+    rgb(192 240 251 / 0) 100%);
+  will-change: transform, opacity;
+}
+.finale-eye {
+  position: absolute;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse closest-side,
+    #c0f0fb 0% 46%,
+    rgb(192 240 251 / .85) 62%,
+    rgb(192 240 251 / 0) 76%);
+  will-change: transform, opacity;
+}
+.finale-wash {
+  position: absolute;
+  inset: 0;
+  background: #c0f0fb;
+  opacity: 0;
+  will-change: opacity;
+}
