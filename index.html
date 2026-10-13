@@ -7,8 +7,8 @@
     <meta name="description" content="猫猫罐，一只躲进罐子里的小猫。">
     <title>猫猫罐</title>
     <link rel="icon" href="data:,">
-    <link rel="stylesheet" href="./styles.css?v=0.3.0">
-    <link rel="stylesheet" href="./finale.css?v=0.3.0">
+    <link rel="stylesheet" href="./styles.css?v=0.4.0">
+    <link rel="stylesheet" href="./finale.css?v=0.4.0">
   </head>
   <body>
     <main class="game" aria-labelledby="game-title">
@@ -21,6 +21,7 @@
           <div class="affection-track" role="progressbar" aria-label="好感度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0 / 100">
             <div class="affection-fill"></div>
           </div>
+          <span class="affection-feedback" aria-hidden="true" hidden></span>
         </div>
         <button class="reset" type="button" aria-label="重置" title="重置" disabled>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 9a8 8 0 1 1-.1 5M4.5 3.5V9H10"/></svg>
@@ -29,10 +30,10 @@
       <section class="stage" id="game-stage" aria-label="小猫和三个罐子" aria-describedby="interaction-hint">
         <p class="loading" role="status">小猫马上就来…</p>
       </section>
-      <p class="hint" id="interaction-hint">按住探出的猫头，轻轻摸摸</p>
+      <p class="hint" id="interaction-hint">探头时按住摸摸 · 起跳时让开小手</p>
       <p class="sr-only" id="announcer" role="status" aria-live="polite"></p>
       <noscript>请启用 JavaScript，和小猫见面。</noscript>
     </main>
-    <script type="module" src="./app.js?v=0.3.0"></script>
+    <script type="module" src="./app.js?v=0.4.1"></script>
   </body>
 </html>

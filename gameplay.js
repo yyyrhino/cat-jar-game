@@ -1,19 +1,21 @@
 // Time is measured in active, foreground seconds. Each peek has a sampled
 // deadline, with one extra second granted by its first successful pet.
-export function createPeekGame({ random = Math.random, onAffection } = {}) {
+export function createPeekGame({ random = Math.random, onAffection, jumpChance = .5 } = {}) {
   const affectionPerSecond = 20;
   const sample = (min, max) => min + random() * (max - min);
   let phase, elapsed, duration, jar, affection, holding, contact, appearance, extended;
+  let action, sourceJar, targetJar, jumpId, penalized;
   const history = [];
   function reset() {
     phase = 'hidden'; elapsed = 0; duration = sample(.5, 3);
     jar = -1; affection = 0; holding = false; contact = false; appearance = 0; extended = false;
+    action = 'peek'; sourceJar = -1; targetJar = -1; jumpId = 0; penalized = false;
     history.length = 0;
     onAffection?.(0);
   }
   function endPet() { holding = false; contact = false; }
   function rememberPhase() {
-    history.push({ phase, duration, jar, appearance });
+    history.push({ phase, duration, jar, appearance, action, sourceJar, targetJar, jumpId });
     if (history.length > 32) history.shift();
   }
   function celebrate() {
@@ -27,14 +29,28 @@ export function createPeekGame({ random = Math.random, onAffection } = {}) {
       jar = options[Math.min(options.length - 1, Math.floor(random() * options.length))];
       appearance++;
       extended = false;
-      phase = 'emerging'; duration = .15;
+      sourceJar = jar; targetJar = jar; penalized = false;
+      action = random() < jumpChance ? 'jump' : 'peek';
+      if (action === 'jump') {
+        jumpId++;
+        phase = 'charging'; duration = .85;
+      } else {
+        phase = 'emerging'; duration = .15;
+      }
     } else if (phase === 'emerging') {
       phase = 'waiting'; duration = sample(1.5, 2.5);
     } else if (phase === 'waiting') {
       endPet(); phase = 'retracting'; duration = .15;
+    } else if (phase === 'charging') {
+      phase = 'launching'; duration = .24;
+    } else if (phase === 'launching') {
+      phase = 'flying'; duration = 1.10;
+    } else if (phase === 'flying') {
+      jar = targetJar; phase = 'landing'; duration = .24;
     } else if (phase === 'celebrating') {
       endPet(); phase = 'returning'; duration = 1.1;
       jar = -1; affection = 0; appearance = 0; extended = false;
+      action = 'peek'; sourceJar = -1; targetJar = -1; penalized = false;
       onAffection?.(0);
     } else {
       phase = 'hidden'; duration = sample(.5, 3);
@@ -64,14 +80,27 @@ export function createPeekGame({ random = Math.random, onAffection } = {}) {
     holding = true; contact = true; return true;
   }
   function setContact(value) { contact = holding && Boolean(value); }
+  function hitAirborne() {
+    if (phase !== 'flying' || penalized) return false;
+    penalized = true;
+    affection = Math.max(0, affection - 30);
+    onAffection?.(affection);
+    return true;
+  }
   function inspect() {
     const t = Math.min(1, elapsed / duration);
     const smooth = t * t * (3 - 2 * t);
-    const progress = phase === 'waiting' || phase === 'celebrating' ? 1 : phase === 'emerging' ? smooth : phase === 'retracting' ? 1 - smooth : 0;
+    const progress = ['waiting', 'celebrating', 'flying'].includes(phase) ? 1
+      : ['emerging', 'launching'].includes(phase) ? smooth
+        : ['retracting', 'landing'].includes(phase) ? 1 - smooth : 0;
+    const jumpProgress = phase === 'launching' ? .15 * t
+      : phase === 'flying' ? .15 + .7 * t
+        : phase === 'landing' ? .85 + .15 * t : 0;
     return { phase, elapsed, duration, remaining: duration - elapsed, jar, appearance, extended,
       affection, holding, petting: phase === 'waiting' && holding && contact, progress,
+      action, sourceJar, targetJar, jumpId, penalized, jumpProgress,
       history: history.map((event) => ({ ...event })) };
   }
   reset();
-  return { advance, beginPet, setContact, endPet, reset, inspect };
+  return { advance, beginPet, setContact, endPet, hitAirborne, reset, inspect };
 }

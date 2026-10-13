@@ -104,6 +104,16 @@ export function createHandCursor(container) {
     disposed = true;
     cursor.remove();
   }
+  // Sample the glove's actual filled silhouette, including fingertips and palm.
+  // Its screen matrix includes responsive size, cursor position, and SVG rotation.
+  const contactSamples = [[58,32],[40,52],[59,53],[76,55],[29,77],[45,80],[65,79],
+    [16,103],[26,102],[39,113],[48,108],[60,106],[70,97],[84,63],[104,70]];
+  function getContactPoints() {
+    if (disposed || cursor.hidden) return [];
+    const matrix = cursor.querySelector('g').getScreenCTM();
+    if (!matrix) return [];
+    return contactSamples.map(([x, y]) => new DOMPoint(x, y).matrixTransform(matrix));
+  }
 
-  return { update, hide, dispose };
+  return { update, hide, dispose, getContactPoints };
 }

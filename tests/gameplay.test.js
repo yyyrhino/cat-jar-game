@@ -32,7 +32,7 @@ function reachCelebrating(game) {
 
 test('hidden interval stays at 0.5–3 seconds and base dwell is 1.5–2.5 seconds', () => {
   for (const sample of [0, .5, 1]) {
-    const game = createPeekGame({ random: () => sample });
+    const game = createPeekGame({ jumpChance: 0, random: () => sample });
     closeTo(game.inspect().duration, .5 + sample * 2.5);
     const state = reachWaiting(game);
     closeTo(state.duration, 1.5 + sample);
@@ -44,7 +44,7 @@ test('hidden interval stays at 0.5–3 seconds and base dwell is 1.5–2.5 secon
 });
 
 test('a pet just before the original deadline grants a full extra second', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   const base = reachWaiting(game).duration;
   game.advance(base - .05);
   assert.equal(game.beginPet(), true);
@@ -62,7 +62,7 @@ test('a pet just before the original deadline grants a full extra second', () =>
 });
 
 test('repeated taps, a continuous hold, and leaving then re-entering cannot stack bonuses', () => {
-  const game = createPeekGame({ random: () => .5 });
+  const game = createPeekGame({ jumpChance: 0, random: () => .5 });
   const base = reachWaiting(game).duration;
   game.beginPet();
   game.advance(.2);
@@ -78,7 +78,7 @@ test('repeated taps, a continuous hold, and leaving then re-entering cannot stac
 });
 
 test('each new appearance gets a fresh bonus and never immediately repeats its jar', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   const first = reachWaiting(game);
   game.beginPet();
   game.advance(game.inspect().remaining + .15);
@@ -93,7 +93,7 @@ test('each new appearance gets a fresh bonus and never immediately repeats its j
 });
 
 test('reset clears affection, contact, and bonus availability', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   reachWaiting(game);
   game.beginPet();
   game.advance(.25);
@@ -112,7 +112,7 @@ test('reset clears affection, contact, and bonus availability', () => {
 
 test('fractional affection includes bonus time but stops at the extended deadline', () => {
   const updates = [];
-  const game = createPeekGame({ random: () => 0, onAffection: (value) => updates.push(value) });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0, onAffection: (value) => updates.push(value) });
   reachWaiting(game);
   game.advance(1.4);
   game.beginPet();
@@ -125,7 +125,7 @@ test('fractional affection includes bonus time but stops at the extended deadlin
 });
 
 test('release and loss of contact stop credit; hidden and retracting cats cannot be petted', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   assert.equal(game.beginPet(), false);
   game.advance(.5);
   assert.equal(game.inspect().phase, 'emerging');
@@ -148,7 +148,7 @@ test('release and loss of contact stop credit; hidden and retracting cats cannot
 });
 
 test('valid petting earns twenty points per second including fractional intervals', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   reachWaiting(game);
   game.beginPet();
   game.advance(.2);
@@ -158,7 +158,7 @@ test('valid petting earns twenty points per second including fractional interval
 });
 
 test('full affection interrupts the peek at the precise threshold and carries surplus time into the finale', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   earnAffection(game, 99);
   const winningJar = game.inspect().jar;
   game.advance(.05 - .02);
@@ -179,7 +179,7 @@ test('full affection interrupts the peek at the precise threshold and carries su
 
 test('the finale fires once, blocks petting, and keeps the completed affection until its return phase', () => {
   const updates = [];
-  const game = createPeekGame({ random: () => 0, onAffection: (value) => updates.push(value) });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0, onAffection: (value) => updates.push(value) });
   reachCelebrating(game);
   const updateCount = updates.length;
   assert.equal(game.beginPet(), false);
@@ -196,7 +196,7 @@ test('the finale fires once, blocks petting, and keeps the completed affection u
 });
 
 test('completion takes priority when full affection coincides with the extended peek deadline', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   earnAffection(game, 97.5);
   reachWaiting(game);
   game.beginPet();
@@ -209,7 +209,7 @@ test('completion takes priority when full affection coincides with the extended 
   assert.equal(game.inspect().affection, 100);
   closeTo(game.inspect().elapsed, 0);
 
-  const fullHolds = createPeekGame({ random: () => 0 });
+  const fullHolds = createPeekGame({ jumpChance: 0, random: () => 0 });
   for (let appearance = 1; appearance <= 2; appearance++) {
     reachWaiting(fullHolds);
     fullHolds.beginPet();
@@ -222,7 +222,7 @@ test('completion takes priority when full affection coincides with the extended 
 
 test('automatic return clears round state and restarts a playable peek cycle', () => {
   const updates = [];
-  const game = createPeekGame({ random: () => 0, onAffection: (value) => updates.push(value) });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0, onAffection: (value) => updates.push(value) });
   reachCelebrating(game);
   game.advance(4.6);
   const returning = game.inspect();
@@ -252,7 +252,7 @@ test('automatic return clears round state and restarts a playable peek cycle', (
 });
 
 test('one long frame can cross completion, the finale, return, and the next peek without stale petting', () => {
-  const game = createPeekGame({ random: () => 0 });
+  const game = createPeekGame({ jumpChance: 0, random: () => 0 });
   earnAffection(game, 99);
   game.advance(.05 + 4.6 + 1.1 + .5 + .15 + .25);
   const state = game.inspect();
@@ -269,7 +269,7 @@ test('one long frame can cross completion, the finale, return, and the next peek
 
 for (const phase of ['celebrating', 'returning']) {
   test(`manual reset during ${phase} immediately starts a clean round`, () => {
-    const game = createPeekGame({ random: () => 0 });
+    const game = createPeekGame({ jumpChance: 0, random: () => 0 });
     reachCelebrating(game);
     if (phase === 'returning') game.advance(4.6);
     game.advance(.2);

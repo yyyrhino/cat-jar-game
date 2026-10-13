@@ -1,6 +1,6 @@
 import * as T from './vendor/three.module.js';
-import { createPeekGame } from './gameplay.js?v=0.3.0';
-import { createHandCursor } from './hand.js';
+import { createPeekGame } from './gameplay.js?v=0.4.1';
+import { createHandCursor } from './hand.js?v=0.4.0';
 import { createFinaleLight } from './finale.js?v=0.3.0';
 
 // The scene deliberately keeps the approved cat and the enlarged jar opening.
@@ -27,7 +27,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   renderer.toneMapping = T.NoToneMapping;
   const canvas = renderer.domElement;
   Object.assign(canvas.style, { display: 'block', width: '100%', height: '100%', touchAction: 'none', cursor: 'default' });
-  canvas.setAttribute('aria-label', '小猫会从三个蓝色罐子中探头，按住露出的猫头可以抚摸。');
+  canvas.setAttribute('aria-label', '探头时按住猫头抚摸；罐子晃动时请让开小手，碰到跳跃中的小猫会扣除好感。');
   canvas.setAttribute('role', 'img');
   container.appendChild(canvas);
   const hand = createHandCursor(container);
@@ -176,6 +176,21 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const g = clamp((y - 1.98) / .25, 0, 1);
     return .43 * g * g * (3 - 2 * g) * Math.exp(-((z / .31) ** 2)) * (Math.exp(-(((x - .47) / .16) ** 2)) + Math.exp(-(((x + .47) / .16) ** 2)));
   }
+  const ballRadius = .82;
+  function ballEarRise(x, y, z) {
+    return .32 * ease((y - 1.48) / .34) * Math.exp(-((z / .30) ** 2))
+      * (Math.exp(-(((x - .43) / .16) ** 2)) + Math.exp(-(((x + .43) / .16) ** 2)));
+  }
+  function ballSurfacePoint(x, y, offset) {
+    let lo = Math.max(.38, y - .4), hi = Math.min(2.019, y);
+    for (let i = 0; i < 18; i++) {
+      const q = (lo + hi) / 2;
+      const z = .88 * Math.sqrt(Math.max(.0001, ballRadius ** 2 - (q - 1.2) ** 2 - x * x));
+      if (q + ballEarRise(x, q, z) > y) hi = q; else lo = q;
+    }
+    const q = (lo + hi) / 2;
+    return [x, y, .88 * Math.sqrt(Math.max(.0001, ballRadius ** 2 - (q - 1.2) ** 2 - x * x)) + offset];
+  }
   function addPart(name, points, indices, partMaterial) {
     const partGeometry = geometry(new T.BufferGeometry());
     partGeometry.setAttribute('position', new T.Float32BufferAttribute(points, 3));
@@ -188,13 +203,18 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     parts.push(part);
     return part;
   }
-  const bodyPoints = [], bodyIndices = [];
+  const bodyPoints = [], bodyIndices = [], bodyBall = [];
   const rings = 120, sides = 96;
   for (let i = 0; i < rings; i++) {
     const y = 2.4 * i / rings, r = radiusAt(y);
     for (let j = 0; j < sides; j++) {
       const angle = j / sides * PI * 2, x = r * Math.cos(angle), z = r * .8 * Math.sin(angle);
       bodyPoints.push(x, y + earRise(x, y, z), z);
+      const latitude = 2 * i / rings - 1;
+      const ballY = 1.2 + ballRadius * latitude;
+      const radius = ballRadius * Math.sqrt(Math.max(0, 1 - latitude * latitude));
+      const ballX = radius * Math.cos(angle), ballZ = radius * .88 * Math.sin(angle);
+      bodyBall.push(ballX, ballY + ballEarRise(ballX, ballY, ballZ), ballZ);
     }
   }
   for (let i = 0; i < rings - 1; i++) for (let j = 0; j < sides; j++) {
@@ -203,13 +223,16 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   const bottom = bodyPoints.length / 3;
   bodyPoints.push(0, 0, 0);
+  bodyBall.push(0, .38, 0);
   const top = bodyPoints.length / 3;
   bodyPoints.push(0, 2.4, 0);
+  bodyBall.push(0, 2.02, 0);
   for (let j = 0; j < sides; j++) {
     const next = (j + 1) % sides;
     bodyIndices.push(bottom, j, next, top, (rings - 1) * sides + next, (rings - 1) * sides + j);
   }
   const body = addPart('black-cat-body', bodyPoints, bodyIndices, black);
+  body.ball = new Float32Array(bodyBall);
   const catOutline = outline(body.geometry, { cat: true });
   cat.add(catOutline);
 
@@ -223,11 +246,13 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     return [x, y, .8 * Math.sqrt(Math.max(.0001, r * r - x * x)) + offset];
   }
   function eye(side, pupil) {
-    const points = [], closed = [], indices = [], radialSteps = 16, segments = 64;
+    const points = [], closed = [], ball = [], indices = [], radialSteps = 16, segments = 64;
     const cx = side * .294 + (pupil ? .007 : 0), cy = 1.925 + (pupil ? .02 : 0);
     const rx = pupil ? .197 : .246, ry = pupil ? .286 : .346;
     const vertex = (u, v) => {
       points.push(...surfacePoint(cx + rx * u, cy + ry * v, pupil ? .020 : .012));
+      // Keep the approved eye/pupil sizes; only move them onto the round body.
+      ball.push(...ballSurfacePoint(cx + rx * u, 1.40 + (pupil ? .02 : 0) + ry * v, pupil ? .020 : .012));
       const ex = side * .294 + (pupil ? .18 : .235) * u;
       const ey = 1.925 + .105 * (1 - u * u) + (pupil ? .002 : .022) * v;
       closed.push(...surfacePoint(ex, ey, pupil ? .020 : .016));
@@ -244,6 +269,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     }
     const part = addPart(`${pupil ? 'pupil' : 'eye'}-${side}`, points, indices, pupil ? pupilMaterial : eyeMaterial);
     part.closed = new Float32Array(closed);
+    part.ball = new Float32Array(ball);
     part.pupil = pupil;
   }
   for (const side of [-1, 1]) { eye(side, false); eye(side, true); }
@@ -259,6 +285,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   let paused = document.hidden;
   const isFinalePhase = (phase) => phase === 'celebrating' || phase === 'returning';
   const isFinale = () => isFinalePhase(peek.phase);
+  const isJumpPhase = (phase) => ['charging', 'launching', 'flying', 'landing'].includes(phase);
 
   function syncFinaleLight() {
     scene.updateMatrixWorld();
@@ -289,15 +316,35 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const centerY = catBase + 1.20;
     const finalScale = clamp(worldHeight * .36 / 2.4, 1.1, 2.3);
     const scale = lerp(1, finalScale, travel);
-    // Leave the opening vertically before crossing towards the middle jar.
-    // All fitting below is evaluated relative to the departing jar's cavity.
+    const jumping = isJumpPhase(peek.phase);
+    const jumpT = jumping ? clamp(peek.elapsed / peek.duration, 0, 1) : 0;
+    const sourceX = [-3.7, 0, 3.7][Math.max(0, peek.sourceJar ?? peek.jar)];
+    const ballBlend = peek.phase === 'launching' ? ease(jumpT * 1.6)
+      : peek.phase === 'flying' ? 1 : peek.phase === 'landing' ? 1 - ease(jumpT) : 0;
+    // Keep the jump centered over its opening throughout launch and landing.
+    const exitLift = 1.20;
+    const arcHeight = clamp(worldHeight * .90 - 4.42, .12, 1.2);
+    // The full-affection finale has its own lift and move to center.
     const bob = motionPreference.matches ? 0 : Math.sin(Math.max(0, t - 1.42) * 2.6) * .04;
-    cat.visible = peek.phase !== 'hidden' && peek.phase !== 'returning';
+    cat.visible = !['hidden', 'returning', 'charging'].includes(peek.phase);
     cat.position.set([-3.7, 0, 3.7][Math.max(0, peek.jar)] * (1 - travel),
       lerp(lift, worldHeight * .43 / Math.cos(pitch) - centerY, travel) + bob, 0);
+    if (jumping) {
+      let jumpLift = 0;
+      if (peek.phase === 'launching') jumpLift = exitLift * ease(jumpT);
+      if (peek.phase === 'flying') jumpLift = exitLift + 4 * arcHeight * jumpT * (1 - jumpT);
+      if (peek.phase === 'landing') jumpLift = exitLift * (1 - ease(jumpT));
+      cat.position.set(sourceX, jumpLift, 0);
+    }
     for (let i = 0; i < jarGroups.length; i++) {
       const group = jarGroups[i];
       group.position.set([-3.7, 0, 3.7][i], -departure * (worldHeight + 3), 0);
+      group.rotation.z = 0;
+      if (peek.phase === 'charging' && i === peek.sourceJar) {
+        const shake = Math.sin(jumpT * PI * 8) * Math.sin(jumpT * PI);
+        group.position.x += shake * (motionPreference.matches ? .026 : .045);
+        group.rotation.z = shake * (motionPreference.matches ? 0 : .065);
+      }
       group.visible = departure < 1;
     }
     const jarY = -departure * (worldHeight + 3);
@@ -309,11 +356,14 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       const positions = part.geometry.attributes.position;
       if (part.pupil) part.mesh.visible = enjoy < .72;
       for (let i = 0; i < part.rest.length; i += 3) {
-        const blend = (offset) => part.closed ? lerp(part.rest[i + offset], part.closed[i + offset], enjoy) : part.rest[i + offset];
+        const blend = (offset) => {
+          const normal = part.closed ? lerp(part.rest[i + offset], part.closed[i + offset], enjoy) : part.rest[i + offset];
+          return lerp(normal, part.ball[i + offset], ballBlend);
+        };
         let px = blend(0), pz = blend(2);
         const y = blend(1) + catBase;
         // A soft vertical compression keeps the entire hidden cat above the floor.
-        // Collision fitting happens in jar-local space, before moving between jars.
+        // Collision fitting happens relative to this jar's opening.
         let py = .22 + (y - .22) * lerp(.54, 1, peek.progress);
         if (celebrating) {
           // A mild stretch on departure settles back into the approved silhouette.
@@ -340,8 +390,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
 
   const raycaster = new T.Raycaster(), pointer = new T.Vector2();
-  function visibleCatHit(event) {
-    if (peek.phase !== 'waiting' || !cat.visible) return null;
+  function visibleCatHit(event, airborne = false) {
+    if (peek.phase !== (airborne ? 'flying' : 'waiting') || !cat.visible) return null;
     const rect = canvas.getBoundingClientRect();
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return null;
     pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
@@ -350,6 +400,17 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const hitMeshes = [...jars, ...rimLines, ...parts.filter((part) => part.mesh.visible).map((part) => part.mesh)];
     const hits = raycaster.intersectObjects(hitMeshes, false);
     return hits.length && parts.some((part) => part.mesh === hits[0].object) ? hits[0] : null;
+  }
+  function checkAirborneContact() {
+    if (peek.phase !== 'flying' || peek.penalized || !pointerPosition || paused || !alive) return;
+    const samples = [{ x: pointerPosition.clientX, y: pointerPosition.clientY }, ...hand.getContactPoints()];
+    if (!samples.some((p) => visibleCatHit({ clientX: p.x, clientY: p.y }, true))) return;
+    const previousAffection = peek.affection;
+    if (gameplay.hitAirborne()) {
+      peek = gameplay.inspect();
+      container.dataset.penalized = 'true';
+      onInteract?.({ type: 'airborne-hit', amount: previousAffection - peek.affection, penalty: 30 });
+    }
   }
   function clearCapture() {
     const previous = pointerId;
@@ -391,17 +452,23 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const previousEnjoy = enjoy;
     enjoy += (target - enjoy) * (1 - Math.exp(-dt * 24));
     if (Math.abs(enjoy - target) < .001) enjoy = target;
-    if (previous.progress !== peek.progress || previous.jar !== peek.jar || previous.phase !== peek.phase || previousEnjoy !== enjoy || isFinale()) dirty = true;
+    if (previous.progress !== peek.progress || previous.jar !== peek.jar || previous.phase !== peek.phase || previousEnjoy !== enjoy || isFinale() || isJumpPhase(peek.phase)) dirty = true;
     container.dataset.phase = peek.phase;
     container.dataset.jar = String(peek.jar);
     container.dataset.interaction = peek.petting ? 'petting' : 'idle';
+    container.dataset.penalized = String(peek.penalized);
+    // Hit testing uses this frame's deformed mesh, including a stationary hand.
+    if (dirty) deform();
     syncHand();
+    checkAirborneContact();
   }
   function pointerDown(event) {
     if (!alive || paused || pointerId !== null || event.button !== 0) return;
     update();
     if (isFinale()) return;
     pointerPosition = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
+    syncHand();
+    checkAirborneContact();
     if (!visibleCatHit(event) || !gameplay.beginPet()) { syncHand(); return; }
     pointerId = event.pointerId;
     canvas.setPointerCapture(pointerId);
@@ -417,6 +484,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     if (pointerId !== null) gameplay.setContact(Boolean(visibleCatHit(event)));
     peek = gameplay.inspect();
     syncHand();
+    checkAirborneContact();
   }
   function release(event) {
     if (event?.pointerId !== undefined && pointerId !== null && event.pointerId !== pointerId) return;
@@ -494,7 +562,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   function frame(now) {
     if (!alive || disposed) return;
     update(now);
-    if (dirty) { deform(); renderer.render(scene, camera); dirty = false; }
+    if (dirty) { renderer.render(scene, camera); dirty = false; }
     animationFrame = requestAnimationFrame(frame);
   }
   function contextLost(event) {
@@ -524,6 +592,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     last = performance.now();
     container.dataset.phase = 'hidden';
     container.dataset.jar = '-1';
+    container.dataset.penalized = 'false';
     deform();
     renderer.render(scene, camera);
     container.dataset.interaction = 'idle';
@@ -562,12 +631,26 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       screenCenter.add(new T.Vector3().fromBufferAttribute(part.geometry.attributes.position, 0));
     }
     cat.localToWorld(screenCenter.multiplyScalar(.5)).project(camera);
+    scene.updateMatrixWorld();
+    const catScreenBounds = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+    const screenPoint = new T.Vector3();
+    const bodyPositions = body.geometry.attributes.position;
+    for (let i = 0; i < bodyPositions.count; i++) {
+      screenPoint.fromBufferAttribute(bodyPositions, i);
+      cat.localToWorld(screenPoint).project(camera);
+      const x = (screenPoint.x + 1) * width / 2, y = (1 - screenPoint.y) * height / 2;
+      catScreenBounds.left = Math.min(catScreenBounds.left, x);
+      catScreenBounds.right = Math.max(catScreenBounds.right, x);
+      catScreenBounds.top = Math.min(catScreenBounds.top, y);
+      catScreenBounds.bottom = Math.max(catScreenBounds.bottom, y);
+    }
     return {
       wallExcess: Number.isFinite(excess) ? excess : null,
       visibleCompression, lowest, highest, samples, rimHeight: rimY,
       jarCount: jars.length, palette: { ...PALETTE }, petting: peek.petting,
       progress: peek.progress,
       catScreenPoint: { x: (screenCenter.x + 1) * width / 2, y: (1 - screenCenter.y) * height / 2 },
+      catScreenBounds,
       outlineWorldWidth: outlineWidth,
     };
   }
@@ -598,7 +681,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   const api = { reset, dispose, inspectFit, inspectGame: () => ({ ...gameplay.inspect(), enjoy, paused,
     finale: { catVisible: cat.visible, catPosition: cat.position.toArray(), jarsVisible: jarGroups.map((group) => group.visible),
-      jarPositions: jarGroups.map((group) => group.position.toArray()), lightColor: '#C0F0FB' } }) };
+      jarPositions: jarGroups.map((group) => group.position.toArray()), jarRotations: jarGroups.map((group) => group.rotation.z), lightColor: '#C0F0FB' } }) };
   container.dataset.phase = peek.phase;
   container.dataset.jar = String(peek.jar);
   onReady?.({ jarCount: 3, palette: { ...PALETTE } });

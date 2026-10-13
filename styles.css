@@ -22,7 +22,7 @@ button { font: inherit; }
   flex-direction: column;
 }
 .hud { display: flex; align-items: center; gap: 48px; padding-inline: 12px; }
-.affection { display: flex; align-items: center; flex: 1; min-width: 0; gap: 22px; }
+.affection { position: relative; display: flex; align-items: center; flex: 1; min-width: 0; gap: 22px; }
 .heart { width: 46px; height: 44px; flex: none; overflow: visible; }
 .heart path { fill: var(--black); stroke: var(--purple); stroke-width: 4; stroke-linejoin: round; }
 .affection-track {
@@ -34,6 +34,28 @@ button { font: inherit; }
   overflow: hidden;
 }
 .affection-fill { width: 0; height: 100%; border-radius: inherit; background: var(--blue); }
+.affection-feedback {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 3px;
+  color: var(--pale);
+  font-size: 14px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  animation: affection-loss 1400ms ease-out both;
+}
+.affection-feedback[hidden] { display: none; }
+.affection.is-hit .affection-track { animation: affection-pulse 400ms ease-out; }
+@keyframes affection-loss {
+  0% { opacity: 0; transform: translateY(3px); }
+  15%, 70% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+@keyframes affection-pulse {
+  25% { border-color: var(--pale); }
+  100% { border-color: var(--purple); }
+}
 .reset {
   display: inline-flex;
   align-items: center;
@@ -78,7 +100,10 @@ noscript { text-align: center; font-size: 14px; }
   .stage { height: clamp(220px, calc(100svh - 125px), 290px); margin-top: 4px; }
   .hint { margin-top: 0; }
 }
-@media (prefers-reduced-motion: reduce) { .reset, .affection, .hint { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .reset, .affection, .hint { transition: none; }
+  .affection-feedback, .affection.is-hit .affection-track { animation: none; }
+}
 
 /* A lightweight glove overlay: pointer input still reaches the 3D scene. */
 .hand-cursor {
