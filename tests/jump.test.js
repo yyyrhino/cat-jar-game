@@ -55,11 +55,11 @@ test('jumps from all three jars always land back in their source jar', () => {
     closeTo(state.progress, 0);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'launching');
-    closeTo(f.game.inspect().duration, .24);
+    closeTo(f.game.inspect().duration, .14);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'flying');
     assert.equal(f.game.inspect().jar, source);
-    closeTo(f.game.inspect().duration, 1.1);
+    closeTo(f.game.inspect().duration, .78);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'landing');
     assert.equal(f.game.inspect().jar, source);
@@ -117,6 +117,7 @@ test('hover collision costs 30 once per jump without changing flight timing or p
   const next = f.start(0);
   assert.equal(next.jumpId, before.jumpId + 1);
   assert.equal(next.penalized, false);
+  assert.equal(next.hurt, false);
   f.finishPhase(); f.finishPhase();
   assert.equal(f.game.hitAirborne(), true);
   assert.equal(f.game.inspect().affection, 0, 'Low affection clamps to zero');
@@ -133,28 +134,54 @@ test('a collision at zero affection still consumes the one-collision allowance',
   assert.equal(f.game.inspect().phase, 'flying');
 });
 
+test('hurt expression begins on collision, lasts through landing and clears before the next appearance', () => {
+  const f = fixture();
+  f.earn(50);
+  f.start(1);
+  assert.equal(f.game.inspect().hurt, false);
+  f.finishPhase(); f.finishPhase();
+  f.game.advance(.1);
+  const remaining = f.game.inspect().remaining;
+  assert.equal(f.game.inspect().hurt, false);
+  assert.equal(f.game.hitAirborne(), true);
+  assert.equal(f.game.inspect().hurt, true);
+  closeTo(f.game.inspect().remaining, remaining);
+  f.game.advance(remaining);
+  assert.equal(f.game.inspect().phase, 'landing');
+  assert.equal(f.game.inspect().hurt, true);
+  closeTo(f.game.inspect().duration, .24);
+  f.finishPhase();
+  assert.equal(f.game.inspect().phase, 'hidden');
+  assert.equal(f.game.inspect().hurt, false);
+  f.start(0, 'peek');
+  assert.equal(f.game.inspect().hurt, false);
+  f.finishPhase();
+  assert.equal(f.game.inspect().hurt, false);
+});
+
 test('no collision preserves affection throughout the jump and never credits a stale hold', () => {
   const f = fixture();
   f.earn(40);
   f.start(1);
-  f.game.advance(.85 + .24 + 1.1 + .24);
+  f.game.advance(.85 + .14 + .78 + .24);
   assert.equal(f.game.inspect().phase, 'hidden');
   assert.equal(f.game.inspect().affection, 40);
   assert.equal(f.game.inspect().holding, false);
   assert.equal(f.game.inspect().penalized, false);
+  assert.equal(f.game.inspect().hurt, false);
 });
 
 test('jump progress is continuous across launch, flight and landing', () => {
   const f = fixture();
   f.start(0);
   f.finishPhase();
-  f.game.advance(.12);
+  f.game.advance(.07);
   closeTo(f.game.inspect().jumpProgress, .075);
   closeTo(f.game.inspect().progress, .5);
   f.finishPhase();
   closeTo(f.game.inspect().jumpProgress, .15);
   closeTo(f.game.inspect().progress, 1);
-  f.game.advance(.55);
+  f.game.advance(.39);
   closeTo(f.game.inspect().jumpProgress, .5);
   f.finishPhase();
   closeTo(f.game.inspect().jumpProgress, .85);
@@ -169,7 +196,7 @@ test('a long frame consumes every jump phase and resumes the next action with co
   f.start(0);
   // After the landing: hidden duration .75, source 2, next action peek, dwell 2.25.
   f.draws.push(.1, .75, .9);
-  f.game.advance(.85 + .24 + 1.1 + .24 + .75 + .15 + .2);
+  f.game.advance(.85 + .14 + .78 + .24 + .75 + .15 + .2);
   const state = f.game.inspect();
   assert.equal(state.phase, 'waiting');
   assert.equal(state.action, 'peek');
@@ -200,6 +227,7 @@ for (const phase of ['charging', 'launching', 'flying', 'landing']) {
     assert.equal(state.affection, 0);
     assert.equal(state.jumpId, 0);
     assert.equal(state.penalized, false);
+    assert.equal(state.hurt, false);
     assert.equal(state.progress, 0);
     assert.equal(state.jumpProgress, 0);
     assert.deepEqual(state.history, []);
@@ -215,7 +243,7 @@ test('after a jump, normal petting can still trigger the finale at exactly 100 p
   const f = fixture();
   f.earn(50);
   f.start(1);
-  f.game.advance(.85 + .24 + 1.1 + .24);
+  f.game.advance(.85 + .14 + .78 + .24);
   f.start(0, 'peek');
   f.finishPhase();
   f.game.beginPet();

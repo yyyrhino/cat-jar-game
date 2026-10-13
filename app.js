@@ -1,4 +1,4 @@
-import { createGameScene } from './scene.js?v=0.4.1';
+import { createGameScene } from './scene.js?v=0.4.2';
 
 const stage = document.querySelector('#game-stage');
 const resetButton = document.querySelector('.reset');
@@ -39,8 +39,8 @@ function showAirborneHit(event) {
   penaltyFeedback.hidden = false;
   affectionGroup.classList.add('is-hit');
   announce(amount > 0
-    ? `跳跃中的小猫不能摸，好感减少 ${readableAmount} 点。`
-    : '小心，跳跃中的小猫不能摸。');
+    ? `小猫撞到手，眼睛变成叉叉，好感减少 ${readableAmount} 点。`
+    : '小猫撞到手了，起跳时请让开小手。');
   feedbackTimer = setTimeout(clearFeedback, 1400);
 }
 

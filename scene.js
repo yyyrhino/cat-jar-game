@@ -1,5 +1,5 @@
 import * as T from './vendor/three.module.js';
-import { createPeekGame } from './gameplay.js?v=0.4.1';
+import { createPeekGame } from './gameplay.js?v=0.4.2';
 import { createHandCursor } from './hand.js?v=0.4.0';
 import { createFinaleLight } from './finale.js?v=0.3.0';
 
@@ -274,6 +274,32 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   for (const side of [-1, 1]) { eye(side, false); eye(side, true); }
 
+  // Two rounded strokes replace each eye on impact and follow both body shapes.
+  function hurtEyeStroke(side, slope) {
+    const points = [], ball = [], indices = [];
+    const cx = side * .294, dx = .148, dy = slope * .19, radius = .038;
+    const angle = Math.atan2(dy, dx), capSegments = 12;
+    const vertex = (x, y) => {
+      points.push(...surfacePoint(cx + x, 1.925 + y, .028));
+      ball.push(...ballSurfacePoint(cx + x, 1.40 + y, .028));
+    };
+    vertex(0, 0);
+    for (const end of [1, -1]) {
+      const start = angle + (end === 1 ? -PI / 2 : PI / 2);
+      for (let i = 0; i <= capSegments; i++) {
+        const a = start + PI * i / capSegments;
+        vertex(end * dx + radius * Math.cos(a), end * dy + radius * Math.sin(a));
+      }
+    }
+    const count = points.length / 3 - 1;
+    for (let i = 0; i < count; i++) indices.push(0, i + 1, (i + 1) % count + 1);
+    const part = addPart(`hurt-eye-${side}-${slope}`, points, indices, eyeMaterial);
+    part.ball = new Float32Array(ball);
+    part.hurtStroke = true;
+    part.mesh.visible = false;
+  }
+  for (const side of [-1, 1]) for (const slope of [-1, 1]) hurtEyeStroke(side, slope);
+
   const gameplay = createPeekGame({ onAffection });
   let peek = gameplay.inspect();
   let pointerId = null;
@@ -331,8 +357,12 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       lerp(lift, worldHeight * .43 / Math.cos(pitch) - centerY, travel) + bob, 0);
     if (jumping) {
       let jumpLift = 0;
-      if (peek.phase === 'launching') jumpLift = exitLift * ease(jumpT);
-      if (peek.phase === 'flying') jumpLift = exitLift + 4 * arcHeight * jumpT * (1 - jumpT);
+      if (peek.phase === 'launching') jumpLift = exitLift * jumpT;
+      if (peek.phase === 'flying') {
+        // Fast upward impulse, then a softer fall. Both sides meet at zero velocity.
+        const arc = jumpT < .30 ? 1 - (1 - jumpT / .30) ** 2 : 1 - ((jumpT - .30) / .70) ** 2;
+        jumpLift = exitLift + arcHeight * arc;
+      }
       if (peek.phase === 'landing') jumpLift = exitLift * (1 - ease(jumpT));
       cat.position.set(sourceX, jumpLift, 0);
     }
@@ -354,7 +384,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     eyeMaterial.color.set(PALETTE.eyes).lerp(lightColor, eyeGlow);
     for (const part of parts) {
       const positions = part.geometry.attributes.position;
-      if (part.pupil) part.mesh.visible = enjoy < .72;
+      if (part.hurtStroke) part.mesh.visible = peek.hurt;
+      else if (part.closed) part.mesh.visible = !peek.hurt && (!part.pupil || enjoy < .72);
       for (let i = 0; i < part.rest.length; i += 3) {
         const blend = (offset) => {
           const normal = part.closed ? lerp(part.rest[i + offset], part.closed[i + offset], enjoy) : part.rest[i + offset];
@@ -385,6 +416,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       part.geometry.computeVertexNormals();
       part.geometry.computeBoundingSphere();
     }
+    container.dataset.expression = peek.hurt ? 'hurt' : enjoy >= .72 ? 'enjoy' : 'normal';
     container.dataset.wallExcess = Number.isFinite(wallExcess) ? wallExcess.toFixed(5) : 'clear';
     syncFinaleLight();
   }
@@ -409,6 +441,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     if (gameplay.hitAirborne()) {
       peek = gameplay.inspect();
       container.dataset.penalized = 'true';
+      dirty = true;
+      deform();
       onInteract?.({ type: 'airborne-hit', amount: previousAffection - peek.affection, penalty: 30 });
     }
   }
@@ -680,6 +714,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     container.dataset.ready = 'false';
   }
   const api = { reset, dispose, inspectFit, inspectGame: () => ({ ...gameplay.inspect(), enjoy, paused,
+    expression: container.dataset.expression,
+    visibleHurtStrokes: parts.filter((part) => part.hurtStroke && part.mesh.visible).length,
+    visibleOpenEyes: parts.filter((part) => part.closed && part.mesh.visible).length,
     finale: { catVisible: cat.visible, catPosition: cat.position.toArray(), jarsVisible: jarGroups.map((group) => group.visible),
       jarPositions: jarGroups.map((group) => group.position.toArray()), jarRotations: jarGroups.map((group) => group.rotation.z), lightColor: '#C0F0FB' } }) };
   container.dataset.phase = peek.phase;

@@ -42,9 +42,9 @@ export function createPeekGame({ random = Math.random, onAffection, jumpChance =
     } else if (phase === 'waiting') {
       endPet(); phase = 'retracting'; duration = .15;
     } else if (phase === 'charging') {
-      phase = 'launching'; duration = .24;
+      phase = 'launching'; duration = .14;
     } else if (phase === 'launching') {
-      phase = 'flying'; duration = 1.10;
+      phase = 'flying'; duration = .78;
     } else if (phase === 'flying') {
       jar = targetJar; phase = 'landing'; duration = .24;
     } else if (phase === 'celebrating') {
@@ -98,7 +98,8 @@ export function createPeekGame({ random = Math.random, onAffection, jumpChance =
         : phase === 'landing' ? .85 + .15 * t : 0;
     return { phase, elapsed, duration, remaining: duration - elapsed, jar, appearance, extended,
       affection, holding, petting: phase === 'waiting' && holding && contact, progress,
-      action, sourceJar, targetJar, jumpId, penalized, jumpProgress,
+      action, sourceJar, targetJar, jumpId, penalized,
+      hurt: penalized && (phase === 'flying' || phase === 'landing'), jumpProgress,
       history: history.map((event) => ({ ...event })) };
   }
   reset();
