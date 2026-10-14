@@ -1,4 +1,4 @@
-import { createGameScene } from './scene.js?v=0.4.2';
+import { createGameScene } from './scene.js?v=0.4.3';
 
 const stage = document.querySelector('#game-stage');
 const resetButton = document.querySelector('.reset');

@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPeekGame } from '../gameplay.js';
+import { createJumpMotion, sampleJumpMotion } from '../jump-motion.js';
+
+const defaultMotion = createJumpMotion();
 
 const closeTo = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-8,
   `Expected ${actual} to be close to ${expected}`);
@@ -55,15 +58,15 @@ test('jumps from all three jars always land back in their source jar', () => {
     closeTo(state.progress, 0);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'launching');
-    closeTo(f.game.inspect().duration, .14);
+    closeTo(f.game.inspect().duration, state.jumpMotion.launchDuration);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'flying');
     assert.equal(f.game.inspect().jar, source);
-    closeTo(f.game.inspect().duration, .78);
+    closeTo(f.game.inspect().duration, state.jumpMotion.flightDuration);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'landing');
     assert.equal(f.game.inspect().jar, source);
-    closeTo(f.game.inspect().duration, .24);
+    closeTo(f.game.inspect().duration, state.jumpMotion.landingDuration);
     f.finishPhase();
     assert.equal(f.game.inspect().phase, 'hidden');
     assert.equal(f.game.inspect().jar, source);
@@ -149,7 +152,7 @@ test('hurt expression begins on collision, lasts through landing and clears befo
   f.game.advance(remaining);
   assert.equal(f.game.inspect().phase, 'landing');
   assert.equal(f.game.inspect().hurt, true);
-  closeTo(f.game.inspect().duration, .24);
+  closeTo(f.game.inspect().duration, defaultMotion.landingDuration);
   f.finishPhase();
   assert.equal(f.game.inspect().phase, 'hidden');
   assert.equal(f.game.inspect().hurt, false);
@@ -163,7 +166,7 @@ test('no collision preserves affection throughout the jump and never credits a s
   const f = fixture();
   f.earn(40);
   f.start(1);
-  f.game.advance(.85 + .14 + .78 + .24);
+  f.game.advance(.85 + defaultMotion.totalDuration);
   assert.equal(f.game.inspect().phase, 'hidden');
   assert.equal(f.game.inspect().affection, 40);
   assert.equal(f.game.inspect().holding, false);
@@ -173,22 +176,68 @@ test('no collision preserves affection throughout the jump and never credits a s
 
 test('jump progress is continuous across launch, flight and landing', () => {
   const f = fixture();
-  f.start(0);
+  const motion = f.start(0).jumpMotion;
   f.finishPhase();
-  f.game.advance(.07);
-  closeTo(f.game.inspect().jumpProgress, .075);
+  f.game.advance(motion.launchDuration / 2);
+  closeTo(f.game.inspect().jumpProgress, motion.launchDuration / (2 * motion.totalDuration));
   closeTo(f.game.inspect().progress, .5);
   f.finishPhase();
-  closeTo(f.game.inspect().jumpProgress, .15);
+  closeTo(f.game.inspect().jumpElapsed, motion.launchDuration);
+  closeTo(f.game.inspect().jumpProgress, motion.launchDuration / motion.totalDuration);
   closeTo(f.game.inspect().progress, 1);
-  f.game.advance(.39);
+  f.game.advance(motion.flightDuration / 2);
   closeTo(f.game.inspect().jumpProgress, .5);
   f.finishPhase();
-  closeTo(f.game.inspect().jumpProgress, .85);
+  closeTo(f.game.inspect().jumpElapsed, motion.totalDuration - motion.landingDuration);
+  closeTo(f.game.inspect().jumpProgress, 1 - motion.landingDuration / motion.totalDuration);
   closeTo(f.game.inspect().progress, 1);
-  f.game.advance(.12);
-  closeTo(f.game.inspect().jumpProgress, .925);
+  f.game.advance(motion.landingDuration / 2);
+  closeTo(f.game.inspect().jumpProgress, 1 - motion.landingDuration / (2 * motion.totalDuration));
   closeTo(f.game.inspect().progress, .5);
+});
+
+test('one sampled height fixes the whole jump and phase boundaries preserve position and velocity', () => {
+  let height = 1.46;
+  let samples = 0;
+  const f = fixture({ getJumpHeight: () => { samples++; return height; } });
+  const motion = f.start(0).jumpMotion;
+  assert.equal(samples, 1);
+  closeTo(motion.height, height);
+  height = 2.4;
+  f.finishPhase();
+  for (const nextPhase of ['flying', 'landing']) {
+    f.game.advance(f.game.inspect().remaining - 1e-7);
+    const before = f.game.inspect();
+    const beforePose = sampleJumpMotion(before.jumpMotion, before.jumpElapsed);
+    f.finishPhase();
+    const after = f.game.inspect();
+    const afterPose = sampleJumpMotion(after.jumpMotion, after.jumpElapsed);
+    assert.equal(after.phase, nextPhase);
+    assert.ok(Math.abs(beforePose.lift - afterPose.lift) < 1e-5);
+    assert.ok(Math.abs(beforePose.velocity - afterPose.velocity) < 1e-5);
+    closeTo(after.jumpMotion.height, 1.46);
+    closeTo(afterPose.lift, motion.clearance);
+  }
+  // Snapshots are copies, so consumers cannot change the live trajectory.
+  f.game.inspect().jumpMotion.height = 99;
+  closeTo(f.game.inspect().jumpMotion.height, 1.46);
+  f.finishPhase();
+  assert.equal(f.game.inspect().jumpMotion, null);
+  closeTo(f.game.inspect().jumpElapsed, 0);
+  f.start(1);
+  assert.equal(samples, 2);
+  closeTo(f.game.inspect().jumpMotion.height, 2.4);
+});
+
+test('every supported height finishes exactly on the jump deadline without extra time', () => {
+  for (const height of [1.32, 1.46, 2.4]) {
+    const f = fixture({ getJumpHeight: () => height });
+    const state = f.start(0);
+    f.game.advance(state.duration + state.jumpMotion.totalDuration);
+    assert.equal(f.game.inspect().phase, 'hidden');
+    closeTo(f.game.inspect().elapsed, 0);
+    assert.equal(f.game.inspect().jumpMotion, null);
+  }
 });
 
 test('a long frame consumes every jump phase and resumes the next action with correct elapsed time', () => {
@@ -196,7 +245,7 @@ test('a long frame consumes every jump phase and resumes the next action with co
   f.start(0);
   // After the landing: hidden duration .75, source 2, next action peek, dwell 2.25.
   f.draws.push(.1, .75, .9);
-  f.game.advance(.85 + .14 + .78 + .24 + .75 + .15 + .2);
+  f.game.advance(.85 + defaultMotion.totalDuration + .75 + .15 + .2);
   const state = f.game.inspect();
   assert.equal(state.phase, 'waiting');
   assert.equal(state.action, 'peek');
@@ -230,6 +279,8 @@ for (const phase of ['charging', 'launching', 'flying', 'landing']) {
     assert.equal(state.hurt, false);
     assert.equal(state.progress, 0);
     assert.equal(state.jumpProgress, 0);
+    assert.equal(state.jumpElapsed, 0);
+    assert.equal(state.jumpMotion, null);
     assert.deepEqual(state.history, []);
     f.start(0, 'peek');
     f.finishPhase();
@@ -243,7 +294,7 @@ test('after a jump, normal petting can still trigger the finale at exactly 100 p
   const f = fixture();
   f.earn(50);
   f.start(1);
-  f.game.advance(.85 + .14 + .78 + .24);
+  f.game.advance(.85 + defaultMotion.totalDuration);
   f.start(0, 'peek');
   f.finishPhase();
   f.game.beginPet();

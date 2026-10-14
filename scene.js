@@ -1,5 +1,6 @@
 import * as T from './vendor/three.module.js';
-import { createPeekGame } from './gameplay.js?v=0.4.2';
+import { createPeekGame } from './gameplay.js?v=0.4.3';
+import { sampleJumpMotion } from './jump-motion.js?v=0.4.3';
 import { createHandCursor } from './hand.js?v=0.4.0';
 import { createFinaleLight } from './finale.js?v=0.3.0';
 
@@ -300,7 +301,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   for (const side of [-1, 1]) for (const slope of [-1, 1]) hurtEyeStroke(side, slope);
 
-  const gameplay = createPeekGame({ onAffection });
+  const gameplay = createPeekGame({ onAffection,
+    getJumpHeight: () => 1.20 + clamp(worldHeight * .90 - 4.42, .12, 1.2),
+  });
   let peek = gameplay.inspect();
   let pointerId = null;
   let pointerPosition = null;
@@ -345,26 +348,16 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const jumping = isJumpPhase(peek.phase);
     const jumpT = jumping ? clamp(peek.elapsed / peek.duration, 0, 1) : 0;
     const sourceX = [-3.7, 0, 3.7][Math.max(0, peek.sourceJar ?? peek.jar)];
-    const ballBlend = peek.phase === 'launching' ? ease(jumpT * 1.6)
-      : peek.phase === 'flying' ? 1 : peek.phase === 'landing' ? 1 - ease(jumpT) : 0;
-    // Keep the jump centered over its opening throughout launch and landing.
-    const exitLift = 1.20;
-    const arcHeight = clamp(worldHeight * .90 - 4.42, .12, 1.2);
+    // Curl up inside the jar and keep one shape throughout the airborne arc.
+    const ballBlend = jumping ? 1 : 0;
     // The full-affection finale has its own lift and move to center.
     const bob = motionPreference.matches ? 0 : Math.sin(Math.max(0, t - 1.42) * 2.6) * .04;
     cat.visible = !['hidden', 'returning', 'charging'].includes(peek.phase);
     cat.position.set([-3.7, 0, 3.7][Math.max(0, peek.jar)] * (1 - travel),
       lerp(lift, worldHeight * .43 / Math.cos(pitch) - centerY, travel) + bob, 0);
     if (jumping) {
-      let jumpLift = 0;
-      if (peek.phase === 'launching') jumpLift = exitLift * jumpT;
-      if (peek.phase === 'flying') {
-        // Fast upward impulse, then a softer fall. Both sides meet at zero velocity.
-        const arc = jumpT < .30 ? 1 - (1 - jumpT / .30) ** 2 : 1 - ((jumpT - .30) / .70) ** 2;
-        jumpLift = exitLift + arcHeight * arc;
-      }
-      if (peek.phase === 'landing') jumpLift = exitLift * (1 - ease(jumpT));
-      cat.position.set(sourceX, jumpLift, 0);
+      // One velocity/acceleration curve continues through the mouth in both directions.
+      cat.position.set(sourceX, sampleJumpMotion(peek.jumpMotion, peek.jumpElapsed).lift, 0);
     }
     for (let i = 0; i < jarGroups.length; i++) {
       const group = jarGroups[i];
@@ -395,7 +388,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
         const y = blend(1) + catBase;
         // A soft vertical compression keeps the entire hidden cat above the floor.
         // Collision fitting happens relative to this jar's opening.
-        let py = .22 + (y - .22) * lerp(.54, 1, peek.progress);
+        let py = jumping ? y : .22 + (y - .22) * lerp(.54, 1, peek.progress);
         if (celebrating) {
           // A mild stretch on departure settles back into the approved silhouette.
           const stretch = motionPreference.matches ? 0 : Math.sin(Math.PI * clamp(t / .72, 0, 1)) * .12;

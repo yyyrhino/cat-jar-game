@@ -1,15 +1,17 @@
+import { createJumpMotion } from './jump-motion.js?v=0.4.3';
+
 // Time is measured in active, foreground seconds. Each peek has a sampled
 // deadline, with one extra second granted by its first successful pet.
-export function createPeekGame({ random = Math.random, onAffection, jumpChance = .5 } = {}) {
+export function createPeekGame({ random = Math.random, onAffection, jumpChance = .5, getJumpHeight = () => 2.4 } = {}) {
   const affectionPerSecond = 20;
   const sample = (min, max) => min + random() * (max - min);
   let phase, elapsed, duration, jar, affection, holding, contact, appearance, extended;
-  let action, sourceJar, targetJar, jumpId, penalized;
+  let action, sourceJar, targetJar, jumpId, penalized, jumpMotion;
   const history = [];
   function reset() {
     phase = 'hidden'; elapsed = 0; duration = sample(.5, 3);
     jar = -1; affection = 0; holding = false; contact = false; appearance = 0; extended = false;
-    action = 'peek'; sourceJar = -1; targetJar = -1; jumpId = 0; penalized = false;
+    action = 'peek'; sourceJar = -1; targetJar = -1; jumpId = 0; penalized = false; jumpMotion = null;
     history.length = 0;
     onAffection?.(0);
   }
@@ -29,10 +31,11 @@ export function createPeekGame({ random = Math.random, onAffection, jumpChance =
       jar = options[Math.min(options.length - 1, Math.floor(random() * options.length))];
       appearance++;
       extended = false;
-      sourceJar = jar; targetJar = jar; penalized = false;
+      sourceJar = jar; targetJar = jar; penalized = false; jumpMotion = null;
       action = random() < jumpChance ? 'jump' : 'peek';
       if (action === 'jump') {
         jumpId++;
+        jumpMotion = createJumpMotion(getJumpHeight());
         phase = 'charging'; duration = .85;
       } else {
         phase = 'emerging'; duration = .15;
@@ -42,18 +45,19 @@ export function createPeekGame({ random = Math.random, onAffection, jumpChance =
     } else if (phase === 'waiting') {
       endPet(); phase = 'retracting'; duration = .15;
     } else if (phase === 'charging') {
-      phase = 'launching'; duration = .14;
+      phase = 'launching'; duration = jumpMotion.launchDuration;
     } else if (phase === 'launching') {
-      phase = 'flying'; duration = .78;
+      phase = 'flying'; duration = jumpMotion.flightDuration;
     } else if (phase === 'flying') {
-      jar = targetJar; phase = 'landing'; duration = .24;
+      jar = targetJar; phase = 'landing'; duration = jumpMotion.landingDuration;
     } else if (phase === 'celebrating') {
       endPet(); phase = 'returning'; duration = 1.1;
       jar = -1; affection = 0; appearance = 0; extended = false;
-      action = 'peek'; sourceJar = -1; targetJar = -1; penalized = false;
+      action = 'peek'; sourceJar = -1; targetJar = -1; penalized = false; jumpMotion = null;
       onAffection?.(0);
     } else {
       phase = 'hidden'; duration = sample(.5, 3);
+      jumpMotion = null;
     }
     rememberPhase();
   }
@@ -93,13 +97,15 @@ export function createPeekGame({ random = Math.random, onAffection, jumpChance =
     const progress = ['waiting', 'celebrating', 'flying'].includes(phase) ? 1
       : ['emerging', 'launching'].includes(phase) ? smooth
         : ['retracting', 'landing'].includes(phase) ? 1 - smooth : 0;
-    const jumpProgress = phase === 'launching' ? .15 * t
-      : phase === 'flying' ? .15 + .7 * t
-        : phase === 'landing' ? .85 + .15 * t : 0;
+    const jumpElapsed = phase === 'launching' ? elapsed
+      : phase === 'flying' ? jumpMotion.launchDuration + elapsed
+        : phase === 'landing' ? jumpMotion.launchDuration + jumpMotion.flightDuration + elapsed : 0;
+    const jumpProgress = jumpMotion ? jumpElapsed / jumpMotion.totalDuration : 0;
     return { phase, elapsed, duration, remaining: duration - elapsed, jar, appearance, extended,
       affection, holding, petting: phase === 'waiting' && holding && contact, progress,
       action, sourceJar, targetJar, jumpId, penalized,
-      hurt: penalized && (phase === 'flying' || phase === 'landing'), jumpProgress,
+      hurt: penalized && (phase === 'flying' || phase === 'landing'), jumpProgress, jumpElapsed,
+      jumpMotion: jumpMotion ? { ...jumpMotion } : null,
       history: history.map((event) => ({ ...event })) };
   }
   reset();
