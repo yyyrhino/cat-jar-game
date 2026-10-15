@@ -120,6 +120,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   for (const [y, r] of [...cavity].reverse()) jarPoints.push(new T.Vector2(r, y));
   jarPoints.push(new T.Vector2(0, .17), new T.Vector2(0, .025));
   const jarGeometry = geometry(new T.LatheGeometry(jarPoints, 128));
+  jarGeometry.computeBoundingBox();
   const exteriorGeometry = geometry(new T.LatheGeometry(exteriorPoints, 128));
   const jarColors = [];
   const blue = new T.Color(PALETTE.ceramic);
@@ -315,8 +316,13 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   const isFinalePhase = (phase) => phase === 'celebrating' || phase === 'returning';
   const isFinale = () => isFinalePhase(peek.phase);
   const isJumpPhase = (phase) => ['charging', 'launching', 'flying', 'landing'].includes(phase);
+  let geometryPose = null;
 
   function syncFinaleLight() {
+    if (!isFinale()) {
+      finaleLight.update({ phase: peek.phase });
+      return;
+    }
     scene.updateMatrixWorld();
     const rect = canvas.getBoundingClientRect();
     const projectEye = (part, index) => {
@@ -335,8 +341,6 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
 
   function deform() {
-    visibleCompression = 0;
-    wallExcess = -Infinity;
     const celebrating = peek.phase === 'celebrating';
     const t = celebrating ? peek.elapsed : 0;
     const travel = ease((t - .72) / .70);
@@ -375,23 +379,38 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     const eyeGlow = celebrating ? ease((t - 1.2) / .85) : 0;
     pupilMaterial.color.set(PALETTE.cat).lerp(lightColor, eyeGlow);
     eyeMaterial.color.set(PALETTE.eyes).lerp(lightColor, eyeGlow);
+    // Translation above the lip and hidden charging do not change the mesh.
+    // Once even its lowest point clears the fitting band, reuse the round pose.
+    const fittingOffset = Math.min(cat.position.y - jarY, jumping ? rimY + .705 - (catBase + .38) : Infinity);
+    const pose = [ballBlend, jumping ? 0 : enjoy, jumping ? 0 : peek.progress,
+      fittingOffset, celebrating ? t : 0, scale];
+    const rebuild = !geometryPose || pose.some((value, index) => value !== geometryPose[index]);
+    if (rebuild) { visibleCompression = 0; wallExcess = -Infinity; }
     for (const part of parts) {
-      const positions = part.geometry.attributes.position;
       if (part.hurtStroke) part.mesh.visible = peek.hurt;
       else if (part.closed) part.mesh.visible = !peek.hurt && (!part.pupil || enjoy < .72);
+      if (!rebuild) continue;
+      const positions = part.geometry.attributes.position;
+      const bounds = part.geometry.boundingBox ??= new T.Box3();
+      bounds.makeEmpty();
+      const min = bounds.min, max = bounds.max;
+      const source = jumping ? part.ball : part.rest;
+      const closeEyes = !jumping && part.closed && enjoy > 0;
+      const compression = lerp(.54, 1, peek.progress);
+      const stretch = celebrating && !motionPreference.matches ? Math.sin(Math.PI * clamp(t / .72, 0, 1)) * .12 : 0;
       for (let i = 0; i < part.rest.length; i += 3) {
-        const blend = (offset) => {
-          const normal = part.closed ? lerp(part.rest[i + offset], part.closed[i + offset], enjoy) : part.rest[i + offset];
-          return lerp(normal, part.ball[i + offset], ballBlend);
-        };
-        let px = blend(0), pz = blend(2);
-        const y = blend(1) + catBase;
+        let px = source[i], localY = source[i + 1], pz = source[i + 2];
+        if (closeEyes) {
+          px = lerp(px, part.closed[i], enjoy);
+          localY = lerp(localY, part.closed[i + 1], enjoy);
+          pz = lerp(pz, part.closed[i + 2], enjoy);
+        }
+        const y = localY + catBase;
         // A soft vertical compression keeps the entire hidden cat above the floor.
         // Collision fitting happens relative to this jar's opening.
-        let py = jumping ? y : .22 + (y - .22) * lerp(.54, 1, peek.progress);
+        let py = jumping ? y : .22 + (y - .22) * compression;
         if (celebrating) {
           // A mild stretch on departure settles back into the approved silhouette.
-          const stretch = motionPreference.matches ? 0 : Math.sin(Math.PI * clamp(t / .72, 0, 1)) * .12;
           py = centerY + (py - centerY) * scale * (1 + stretch);
           px *= scale / Math.sqrt(1 + stretch);
           pz *= scale / Math.sqrt(1 + stretch);
@@ -402,34 +421,63 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
         positions.array[i] = px;
         positions.array[i + 1] = py;
         positions.array[i + 2] = pz;
+        min.x = Math.min(min.x, px); min.y = Math.min(min.y, py); min.z = Math.min(min.z, pz);
+        max.x = Math.max(max.x, px); max.y = Math.max(max.y, py); max.z = Math.max(max.z, pz);
         if (cavityY <= rimY) wallExcess = Math.max(wallExcess, Math.hypot(px, pz) - cavityRadius(cavityY));
         else visibleCompression = Math.max(visibleCompression, radius - fitted);
       }
       positions.needsUpdate = true;
-      part.geometry.computeVertexNormals();
-      part.geometry.computeBoundingSphere();
+      // Only the body outline uses normals; the flat eye materials do not.
+      if (part === body) part.geometry.computeVertexNormals();
+      const sphere = part.geometry.boundingSphere ??= new T.Sphere();
+      bounds.getCenter(sphere.center);
+      sphere.radius = min.distanceTo(max) * .5;
     }
+    if (rebuild) geometryPose = pose;
     container.dataset.expression = peek.hurt ? 'hurt' : enjoy >= .72 ? 'enjoy' : 'normal';
     container.dataset.wallExcess = Number.isFinite(wallExcess) ? wallExcess.toFixed(5) : 'clear';
     syncFinaleLight();
   }
 
   const raycaster = new T.Raycaster(), pointer = new T.Vector2();
-  function visibleCatHit(event, airborne = false) {
-    if (peek.phase !== (airborne ? 'flying' : 'waiting') || !cat.visible) return null;
+  const projectedCorner = new T.Vector3();
+  function prepareHitTest() {
     const rect = canvas.getBoundingClientRect();
+    scene.updateMatrixWorld();
+    const bounds = body.geometry.boundingBox;
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      projectedCorner.set(i & 1 ? bounds.max.x : bounds.min.x,
+        i & 2 ? bounds.max.y : bounds.min.y, i & 4 ? bounds.max.z : bounds.min.z)
+        .applyMatrix4(cat.matrixWorld).project(camera);
+      const x = rect.left + (projectedCorner.x + 1) * rect.width / 2;
+      const y = rect.top + (1 - projectedCorner.y) * rect.height / 2;
+      left = Math.min(left, x); right = Math.max(right, x);
+      top = Math.min(top, y); bottom = Math.max(bottom, y);
+    }
+    return { rect, left: left - 2, top: top - 2, right: right + 2, bottom: bottom + 2,
+      meshes: parts.filter((part) => part.mesh.visible).map((part) => part.mesh) };
+  }
+  function visibleCatHit(event, airborne = false, batch = null) {
+    if (peek.phase !== (airborne ? 'flying' : 'waiting') || !cat.visible) return null;
+    const { rect, left, top, right, bottom, meshes } = batch ?? prepareHitTest();
+    if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) return null;
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return null;
     pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, 1 - (event.clientY - rect.top) / rect.height * 2);
     raycaster.setFromCamera(pointer, camera);
-    scene.updateMatrixWorld();
-    const hitMeshes = [...jars, ...rimLines, ...parts.filter((part) => part.mesh.visible).map((part) => part.mesh)];
-    const hits = raycaster.intersectObjects(hitMeshes, false);
-    return hits.length && parts.some((part) => part.mesh === hits[0].object) ? hits[0] : null;
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (!hits.length) return null;
+    // The jars matter only when they can obscure an actual cat intersection.
+    raycaster.far = hits[0].distance;
+    const blockers = raycaster.intersectObjects([...jars, ...rimLines], false);
+    raycaster.far = Infinity;
+    return blockers.length ? null : hits[0];
   }
   function checkAirborneContact() {
     if (peek.phase !== 'flying' || peek.penalized || !pointerPosition || paused || !alive) return;
+    const batch = prepareHitTest();
     const samples = [{ x: pointerPosition.clientX, y: pointerPosition.clientY }, ...hand.getContactPoints()];
-    if (!samples.some((p) => visibleCatHit({ clientX: p.x, clientY: p.y }, true))) return;
+    if (!samples.some((p) => visibleCatHit({ clientX: p.x, clientY: p.y }, true, batch))) return;
     const previousAffection = peek.affection;
     if (gameplay.hitAirborne()) {
       peek = gameplay.inspect();
@@ -459,7 +507,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     canvas.style.cursor = visible ? 'none' : 'default';
   }
   // Flush elapsed time before an input changes contact, avoiding backdated credit.
-  function update(now = performance.now()) {
+  function update(now = performance.now(), syncScene = true) {
     // An input can run after the timestamp of an already queued animation frame.
     now = Math.max(now, last);
     const dt = Math.max(0, (now - last) / 1000);
@@ -473,7 +521,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       if (peek.phase === 'returning' || (isFinalePhase(previous.phase) && !isFinale())) onInteract?.({ type: 'round-ready' });
     }
     if (!peek.holding && pointerId !== null) clearCapture();
-    if (pointerId !== null && pointerPosition) gameplay.setContact(Boolean(visibleCatHit(pointerPosition)));
+    if (syncScene && pointerId !== null && pointerPosition) gameplay.setContact(Boolean(visibleCatHit(pointerPosition)));
     peek = gameplay.inspect();
     const target = peek.petting ? 1 : 0;
     const previousEnjoy = enjoy;
@@ -485,9 +533,11 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     container.dataset.interaction = peek.petting ? 'petting' : 'idle';
     container.dataset.penalized = String(peek.penalized);
     // Hit testing uses this frame's deformed mesh, including a stationary hand.
-    if (dirty) deform();
-    syncHand();
-    checkAirborneContact();
+    if (syncScene) {
+      if (dirty) deform();
+      syncHand();
+      checkAirborneContact();
+    }
   }
   function pointerDown(event) {
     if (!alive || paused || pointerId !== null || event.button !== 0) return;
@@ -506,7 +556,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   function pointerMove(event) {
     if (pointerId !== null && event.pointerId !== pointerId) return;
-    update();
+    // Flush scoring at the event time, but rebuild the model on the next frame.
+    // The glove and contact still respond to every input, including quick passes.
+    update(performance.now(), false);
     pointerPosition = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
     if (pointerId !== null) gameplay.setContact(Boolean(visibleCatHit(event)));
     peek = gameplay.inspect();
