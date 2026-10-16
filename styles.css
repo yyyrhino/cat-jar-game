@@ -132,6 +132,12 @@ noscript { text-align: center; font-size: 14px; }
   transform-origin: 17.89% 75.38%;
 }
 .hand-cursor.is-petting .hand-pose { animation: glove-stroke 620ms ease-in-out infinite; }
+.hand-cursor.is-catching .hand-anchor { transform: translate(-25.32%, -69.16%); }
+.hand-cursor.is-catching .hand-pose {
+  animation: none;
+  transform-origin: 25.32% 69.16%;
+  transform: rotate(180deg);
+}
 @keyframes glove-stroke {
   0%, 100% { transform: translate(-4px, -1px) rotate(-5deg); }
   50% { transform: translate(4px, 2px) rotate(4deg); }

@@ -24,7 +24,7 @@ function earnAffection(game, target) {
 }
 
 function reachCelebrating(game) {
-  earnAffection(game, 99);
+  earnAffection(game, 199);
   game.advance(.05);
   assert.equal(game.inspect().phase, 'celebrating');
   return game.inspect();
@@ -159,16 +159,16 @@ test('valid petting earns twenty points per second including fractional interval
 
 test('full affection interrupts the peek at the precise threshold and carries surplus time into the finale', () => {
   const game = createPeekGame({ jumpChance: 0, random: () => 0 });
-  earnAffection(game, 99);
+  earnAffection(game, 199);
   const winningJar = game.inspect().jar;
   game.advance(.05 - .02);
   assert.equal(game.inspect().phase, 'waiting');
-  closeTo(game.inspect().affection, 99.6);
+  closeTo(game.inspect().affection, 199.6);
   game.advance(.22);
   const state = game.inspect();
   assert.equal(state.phase, 'celebrating');
   assert.equal(state.jar, winningJar);
-  assert.equal(state.affection, 100);
+  assert.equal(state.affection, 200);
   assert.equal(state.progress, 1);
   assert.equal(state.holding, false);
   assert.equal(state.petting, false);
@@ -187,35 +187,35 @@ test('the finale fires once, blocks petting, and keeps the completed affection u
   game.advance(2);
   assert.equal(game.beginPet(), false);
   const state = game.inspect();
-  assert.equal(state.affection, 100);
+  assert.equal(state.affection, 200);
   assert.equal(state.holding, false);
   assert.equal(state.petting, false);
   assert.equal(updates.length, updateCount);
-  assert.equal(updates.filter((value) => value === 100).length, 1);
+  assert.equal(updates.filter((value) => value === 200).length, 1);
   assert.equal(state.history.filter((event) => event.phase === 'celebrating').length, 1);
 });
 
 test('completion takes priority when full affection coincides with the extended peek deadline', () => {
   const game = createPeekGame({ jumpChance: 0, random: () => 0 });
-  earnAffection(game, 97.5);
+  earnAffection(game, 197.5);
   reachWaiting(game);
   game.beginPet();
   game.setContact(false);
-  const timeToFull = (100 - game.inspect().affection) / 20;
+  const timeToFull = (200 - game.inspect().affection) / 20;
   game.advance(game.inspect().remaining - timeToFull);
   game.setContact(true);
   game.advance(game.inspect().remaining);
   assert.equal(game.inspect().phase, 'celebrating');
-  assert.equal(game.inspect().affection, 100);
+  assert.equal(game.inspect().affection, 200);
   closeTo(game.inspect().elapsed, 0);
 
   const fullHolds = createPeekGame({ jumpChance: 0, random: () => 0 });
-  for (let appearance = 1; appearance <= 2; appearance++) {
+  for (let appearance = 1; appearance <= 4; appearance++) {
     reachWaiting(fullHolds);
     fullHolds.beginPet();
     fullHolds.advance(fullHolds.inspect().remaining);
     assert.equal(fullHolds.inspect().affection, appearance * 50);
-    assert.equal(fullHolds.inspect().phase, appearance === 2 ? 'celebrating' : 'retracting');
+    assert.equal(fullHolds.inspect().phase, appearance === 4 ? 'celebrating' : 'retracting');
   }
   closeTo(fullHolds.inspect().elapsed, 0);
 });
@@ -248,12 +248,12 @@ test('automatic return clears round state and restarts a playable peek cycle', (
   game.advance(.25);
   closeTo(game.inspect().affection, 5);
   reachCelebrating(game);
-  assert.equal(updates.filter((value) => value === 100).length, 2, 'A second completed round has its own finale');
+  assert.equal(updates.filter((value) => value === 200).length, 2, 'A second completed round has its own finale');
 });
 
 test('one long frame can cross completion, the finale, return, and the next peek without stale petting', () => {
   const game = createPeekGame({ jumpChance: 0, random: () => 0 });
-  earnAffection(game, 99);
+  earnAffection(game, 199);
   game.advance(.05 + 4.6 + 1.1 + .5 + .15 + .25);
   const state = game.inspect();
   assert.equal(state.phase, 'waiting');

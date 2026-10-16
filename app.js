@@ -1,4 +1,5 @@
-import { createGameScene } from './scene.js?v=0.4.4';
+import { createGameScene } from './scene.js?v=0.5.0';
+import { MAX_AFFECTION } from './gameplay.js?v=0.5.0';
 
 const stage = document.querySelector('#game-stage');
 const resetButton = document.querySelector('.reset');
@@ -9,6 +10,8 @@ const affectionFill = document.querySelector('.affection-fill');
 const affectionGroup = document.querySelector('.affection');
 const penaltyFeedback = document.querySelector('.affection-feedback');
 const gameShell = document.querySelector('.game');
+const hint = document.querySelector('#interaction-hint');
+const defaultHint = '左键摸摸 · 按住右键接下落的猫 · 再次右键放回';
 let game;
 let announcementTimer;
 let feedbackTimer;
@@ -35,21 +38,32 @@ function showAirborneHit(event) {
   clearFeedback();
   const amount = Math.min(30, Math.max(0, Number(event.amount) || 0));
   const readableAmount = Number(amount.toFixed(1)).toString();
-  penaltyFeedback.textContent = amount > 0 ? `−${readableAmount}` : '小心，跳跃中';
+  penaltyFeedback.textContent = amount > 0 ? `−${readableAmount}` : '拍到小猫了';
   penaltyFeedback.hidden = false;
   affectionGroup.classList.add('is-hit');
   announce(amount > 0
-    ? `小猫撞到手，眼睛变成叉叉，好感减少 ${readableAmount} 点。`
-    : '小猫撞到手了，起跳时请让开小手。');
+    ? `拍到空中的小猫了，眼睛变成叉叉，好感减少 ${readableAmount} 点。`
+    : '拍到空中的小猫了，请用右键翻掌接住下落的小猫。');
   feedbackTimer = setTimeout(clearFeedback, 1400);
+}
+function showOutcome(event) {
+  clearFeedback();
+  const amount = Number(Math.max(0, event.amount).toFixed(1));
+  const caught = event.type === 'catch-release';
+  penaltyFeedback.textContent = caught ? `${event.timely ? '及时接住 ' : '稳稳接住 '}+${amount}`
+    : amount ? `没接住 −${amount}` : '没接住';
+  penaltyFeedback.hidden = false;
+  announce(caught ? `已放回罐子，好感增加 ${amount} 点。` : `没接住小猫，好感减少 ${amount} 点。`);
+  feedbackTimer = setTimeout(clearFeedback, 1800);
+  hint.textContent = defaultHint;
 }
 
 function updateAffection(value) {
-  const affection = Math.min(100, Math.max(0, Number(value) || 0));
+  const affection = Math.min(MAX_AFFECTION, Math.max(0, Number(value) || 0));
   const readableValue = Number(affection.toFixed(1)).toString();
-  affectionFill.style.width = `${affection}%`;
+  affectionFill.style.width = `${affection / MAX_AFFECTION * 100}%`;
   affectionTrack.setAttribute('aria-valuenow', readableValue);
-  affectionTrack.setAttribute('aria-valuetext', `${readableValue} / 100`);
+  affectionTrack.setAttribute('aria-valuetext', `${readableValue} / ${MAX_AFFECTION}`);
 }
 
 try {
@@ -58,6 +72,13 @@ try {
     onAffection: updateAffection,
     onInteract(event) {
       if (event.type === 'airborne-hit') showAirborneHit(event);
+      if (event.type === 'missed-catch' || event.type === 'catch-release') showOutcome(event);
+      if (event.type === 'cat-caught') {
+        clearFeedback();
+        hint.textContent = `${event.timely ? '及时接住！' : '接住啦！'}松开后再次右键放回 · +${event.reward}`;
+        announce(hint.textContent);
+      }
+      if (event.type === 'cat-placing') hint.textContent = '轻轻放回罐子…';
       if (event.type === 'finale-start') {
         clearFeedback();
         gameShell.classList.add('is-ending');
@@ -67,6 +88,7 @@ try {
         clearFeedback();
         clearAnnouncement();
         gameShell.classList.remove('is-ending');
+        hint.textContent = defaultHint;
       }
       if (event.type === 'error') {
         clearFeedback();

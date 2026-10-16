@@ -42,12 +42,16 @@ export function createHandCursor(container) {
   let tapUntil = 0;
   let tapOrigin = null;
   let disposed = false;
+  let catchingPose = false;
+  const artwork = cursor.querySelector('g');
 
   function hide() {
     cursor.hidden = true;
     cursor.dataset.state = 'hidden';
     cursor.dataset.petting = 'false';
     cursor.classList.remove('is-petting');
+    cursor.classList.remove('is-catching');
+    catchingPose = false;
     active = false;
     wasPetting = false;
     tapUntil = 0;
@@ -56,13 +60,16 @@ export function createHandCursor(container) {
     blend = null;
   }
 
-  function update({ x, y, visible, petting = false, canPet = true, headX, headY, pointerType = 'mouse' }) {
+  function update({ x, y, visible, petting = false, canPet = true, catching = false, holdingCat = false, headX, headY, pointerType = 'mouse' }) {
     if (disposed) return;
     if (!visible || !Number.isFinite(x) || !Number.isFinite(y)) {
       hide();
       return;
     }
     const now = performance.now();
+    catchingPose = catching || holdingCat;
+    cursor.classList.toggle('is-catching', catchingPose);
+    if (catchingPose) { petting = false; canPet = false; blend = null; }
     // A quick click still reads as a short stroke. This visual tail never earns
     // affection, and is cancelled when the cat retreats or the pointer moves.
     if (petting && !wasPetting) {
@@ -94,7 +101,7 @@ export function createHandCursor(container) {
       position = target;
     }
     cursor.dataset.pointerType = pointerType;
-    cursor.dataset.state = active ? 'petting' : 'idle';
+    cursor.dataset.state = holdingCat ? 'holding' : catching ? 'catching' : active ? 'petting' : 'idle';
     cursor.dataset.petting = String(active);
     cursor.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
     cursor.hidden = false;
@@ -110,10 +117,17 @@ export function createHandCursor(container) {
     [16,103],[26,102],[39,113],[48,108],[60,106],[70,97],[84,63],[104,70]];
   function getContactPoints() {
     if (disposed || cursor.hidden) return [];
-    const matrix = cursor.querySelector('g').getScreenCTM();
+    const matrix = artwork.getScreenCTM();
     if (!matrix) return [];
     return contactSamples.map(([x, y]) => new DOMPoint(x, y).matrixTransform(matrix));
   }
+  function getCatchPoints() {
+    if (disposed || cursor.hidden || !catchingPose) return [];
+    const matrix = artwork.getScreenCTM();
+    if (!matrix) return [];
+    return [[43.33,106.33],[20,105],[42,111],[62,108],[73,97]]
+      .map(([x, y]) => new DOMPoint(x, y).matrixTransform(matrix));
+  }
 
-  return { update, hide, dispose, getContactPoints };
+  return { update, hide, dispose, getContactPoints, getCatchPoints };
 }

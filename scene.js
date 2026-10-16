@@ -1,7 +1,7 @@
 import * as T from './vendor/three.module.js';
-import { createPeekGame } from './gameplay.js?v=0.4.3';
+import { createPeekGame } from './gameplay.js?v=0.5.0';
 import { sampleJumpMotion } from './jump-motion.js?v=0.4.3';
-import { createHandCursor } from './hand.js?v=0.4.0';
+import { createHandCursor } from './hand.js?v=0.5.0';
 import { createFinaleLight } from './finale.js?v=0.3.0';
 
 // The scene deliberately keeps the approved cat and the enlarged jar opening.
@@ -28,7 +28,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   renderer.toneMapping = T.NoToneMapping;
   const canvas = renderer.domElement;
   Object.assign(canvas.style, { display: 'block', width: '100%', height: '100%', touchAction: 'none', cursor: 'default' });
-  canvas.setAttribute('aria-label', '探头时按住猫头抚摸；罐子晃动时请让开小手，碰到跳跃中的小猫会扣除好感。');
+  canvas.setAttribute('aria-label', '探头时按左键抚摸；按住右键翻掌接住下落的小猫，再次右键放回罐子。及时接住有额外奖励。左键拍到空中小猫扣30，漏接扣10。');
   canvas.setAttribute('role', 'img');
   container.appendChild(canvas);
   const hand = createHandCursor(container);
@@ -302,12 +302,18 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   for (const side of [-1, 1]) for (const slope of [-1, 1]) hurtEyeStroke(side, slope);
 
-  const gameplay = createPeekGame({ onAffection,
+  const gameplay = createPeekGame({ onAffection, onFeedback: (event) => onInteract?.(event),
     getJumpHeight: () => 1.20 + clamp(worldHeight * .90 - 4.42, .12, 1.2),
   });
   let peek = gameplay.inspect();
   let pointerId = null;
   let pointerPosition = null;
+  let rightDown = false;
+  let rightPressedAt = -Infinity;
+  const catchWindowMs = 200;
+  let carriedPose = null;
+  let carryAnchor = null;
+  let placeOrigin = null;
   let enjoy = 0;
   let visibleCompression = 0;
   let wallExcess = -Infinity;
@@ -315,7 +321,7 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   let paused = document.hidden;
   const isFinalePhase = (phase) => phase === 'celebrating' || phase === 'returning';
   const isFinale = () => isFinalePhase(peek.phase);
-  const isJumpPhase = (phase) => ['charging', 'launching', 'flying', 'landing'].includes(phase);
+  const isJumpPhase = (phase) => ['charging', 'launching', 'flying', 'landing', 'caught', 'placing'].includes(phase);
   let geometryPose = null;
 
   function syncFinaleLight() {
@@ -362,6 +368,14 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     if (jumping) {
       // One velocity/acceleration curve continues through the mouth in both directions.
       cat.position.set(sourceX, sampleJumpMotion(peek.jumpMotion, peek.jumpElapsed).lift, 0);
+      if (peek.phase === 'caught' && carriedPose) cat.position.copy(carriedPose);
+      if (peek.phase === 'placing' && placeOrigin) {
+        // Move over the original mouth before lowering, so a carried cat cannot
+        // cut diagonally through a neighbouring jar's shoulder.
+        const align = ease(peek.placingProgress / .35);
+        const lower = ease((peek.placingProgress - .35) / .65);
+        cat.position.set(lerp(placeOrigin.x, sourceX, align), lerp(placeOrigin.y, -.90, lower), 0);
+      }
     }
     for (let i = 0; i < jarGroups.length; i++) {
       const group = jarGroups[i];
@@ -473,11 +487,29 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     raycaster.far = Infinity;
     return blockers.length ? null : hits[0];
   }
-  function checkAirborneContact() {
-    if (peek.phase !== 'flying' || peek.penalized || !pointerPosition || paused || !alive) return;
+  function projectedFoot() {
+    return new T.Vector3(cat.position.x, cat.position.y + catBase + .38, 0).project(camera);
+  }
+  function checkAirborneCatch() {
+    if (!rightDown || peek.phase !== 'flying' || !pointerPosition || paused || !alive) return;
+    if (sampleJumpMotion(peek.jumpMotion, peek.jumpElapsed).velocity > 0) return;
     const batch = prepareHitTest();
-    const samples = [{ x: pointerPosition.clientX, y: pointerPosition.clientY }, ...hand.getContactPoints()];
-    if (!samples.some((p) => visibleCatHit({ clientX: p.x, clientY: p.y }, true, batch))) return;
+    const samples = hand.getCatchPoints();
+    // Only the upward-facing fingers under the lower half can support the cat.
+    if (!samples.some((p) => p.y >= batch.top + (batch.bottom - batch.top) * .60
+      && visibleCatHit({ clientX: p.x, clientY: p.y }, true, batch))) return;
+    const timely = performance.now() - rightPressedAt <= catchWindowMs;
+    if (!gameplay.catchAirborne({ timely })) return;
+    carriedPose = cat.position.clone();
+    carryAnchor = { ...pointerPosition, x: carriedPose.x, y: carriedPose.y };
+    peek = gameplay.inspect();
+    dirty = true;
+    deform();
+    syncHand();
+    onInteract?.({ type: 'cat-caught', timely, reward: peek.catchReward });
+  }
+  function slapAirborne(event) {
+    if (!visibleCatHit(event, true)) return false;
     const previousAffection = peek.affection;
     if (gameplay.hitAirborne()) {
       peek = gameplay.inspect();
@@ -485,7 +517,18 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
       dirty = true;
       deform();
       onInteract?.({ type: 'airborne-hit', amount: previousAffection - peek.affection, penalty: 30 });
+      return true;
     }
+    return false;
+  }
+  function moveCarriedCat() {
+    if (peek.phase !== 'caught' || !pointerPosition || !carryAnchor) return;
+    const rect = canvas.getBoundingClientRect();
+    const maxLift = Math.max(1.20, worldHeight * .90 / Math.cos(pitch) - 3.35);
+    carriedPose.set(clamp(carryAnchor.x + (pointerPosition.clientX - carryAnchor.clientX) * (camera.right - camera.left) / rect.width,
+      camera.left + .95, camera.right - .95),
+    clamp(carryAnchor.y - (pointerPosition.clientY - carryAnchor.clientY) * worldHeight / rect.height / Math.cos(pitch), 1.20, maxLift), 0);
+    dirty = true;
   }
   function clearCapture() {
     const previous = pointerId;
@@ -494,15 +537,19 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   }
   function syncHand() {
     const rect = canvas.getBoundingClientRect();
-    const visible = Boolean(pointerPosition && alive && !disposed && !paused && !isFinale()
+    const holdingCat = peek.phase === 'caught';
+    const visible = Boolean(alive && !disposed && !paused && !isFinale() && (holdingCat || (pointerPosition
       && pointerPosition.clientX >= rect.left && pointerPosition.clientX <= rect.right
-      && pointerPosition.clientY >= rect.top && pointerPosition.clientY <= rect.bottom);
+      && pointerPosition.clientY >= rect.top && pointerPosition.clientY <= rect.bottom)));
     const crown = new T.Vector3([-3.7, 0, 3.7][Math.max(0, peek.jar)], catBase + 2.40, .16).project(camera);
+    const foot = projectedFoot();
     hand.update({
-      x: pointerPosition?.clientX ?? 0, y: pointerPosition?.clientY ?? 0,
+      x: holdingCat ? rect.left + (foot.x + 1) * rect.width / 2 : pointerPosition?.clientX ?? 0,
+      y: holdingCat ? rect.top + (1 - foot.y) * rect.height / 2 + 2 : pointerPosition?.clientY ?? 0,
       headX: rect.left + (crown.x + 1) * rect.width / 2,
       headY: rect.top + (1 - crown.y) * rect.height / 2,
       visible, petting: peek.petting, canPet: peek.phase === 'waiting', pointerType: pointerPosition?.pointerType ?? 'mouse',
+      catching: rightDown && !['placing', 'celebrating', 'returning'].includes(peek.phase), holdingCat,
     });
     canvas.style.cursor = visible ? 'none' : 'default';
   }
@@ -517,8 +564,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     gameplay.advance(dt);
     peek = gameplay.inspect();
     if (previous.phase !== peek.phase) {
-      if (peek.phase === 'celebrating') onInteract?.({ type: 'finale-start' });
+      if (peek.phase === 'celebrating') { rightDown = false; onInteract?.({ type: 'finale-start' }); }
       if (peek.phase === 'returning' || (isFinalePhase(previous.phase) && !isFinale())) onInteract?.({ type: 'round-ready' });
+      if (peek.phase === 'hidden') { carriedPose = null; carryAnchor = null; placeOrigin = null; }
     }
     if (!peek.holding && pointerId !== null) clearCapture();
     if (syncScene && pointerId !== null && pointerPosition) gameplay.setContact(Boolean(visibleCatHit(pointerPosition)));
@@ -530,22 +578,41 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     if (previous.progress !== peek.progress || previous.jar !== peek.jar || previous.phase !== peek.phase || previousEnjoy !== enjoy || isFinale() || isJumpPhase(peek.phase)) dirty = true;
     container.dataset.phase = peek.phase;
     container.dataset.jar = String(peek.jar);
-    container.dataset.interaction = peek.petting ? 'petting' : 'idle';
+    container.dataset.interaction = peek.phase === 'caught' ? 'holding' : peek.petting ? 'petting' : rightDown ? 'catching' : 'idle';
     container.dataset.penalized = String(peek.penalized);
     // Hit testing uses this frame's deformed mesh, including a stationary hand.
     if (syncScene) {
       if (dirty) deform();
       syncHand();
-      checkAirborneContact();
+      checkAirborneCatch();
     }
   }
   function pointerDown(event) {
-    if (!alive || paused || pointerId !== null || event.button !== 0) return;
+    if (!alive || paused || ![0, 2].includes(event.button)) return;
+    if (event.button === 0) rightDown = false;
     update();
     if (isFinale()) return;
     pointerPosition = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
+    if (event.button === 2) {
+      event.preventDefault();
+      if (rightDown) return;
+      if (peek.phase === 'caught') {
+        placeOrigin = cat.position.clone();
+        gameplay.placeCaught();
+        peek = gameplay.inspect();
+        dirty = true;
+        onInteract?.({ type: 'cat-placing' });
+      } else if (peek.phase !== 'placing') {
+        gameplay.endPet(); clearCapture();
+        rightDown = true; rightPressedAt = performance.now();
+      }
+      syncHand();
+      checkAirborneCatch();
+      return;
+    }
+    if (pointerId !== null || ['caught', 'placing'].includes(peek.phase)) return;
     syncHand();
-    checkAirborneContact();
+    if (peek.phase === 'flying') { slapAirborne(event); return; }
     if (!visibleCatHit(event) || !gameplay.beginPet()) { syncHand(); return; }
     pointerId = event.pointerId;
     canvas.setPointerCapture(pointerId);
@@ -562,10 +629,12 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     pointerPosition = { clientX: event.clientX, clientY: event.clientY, pointerType: event.pointerType };
     if (pointerId !== null) gameplay.setContact(Boolean(visibleCatHit(event)));
     peek = gameplay.inspect();
+    moveCarriedCat();
     syncHand();
-    checkAirborneContact();
+    checkAirborneCatch();
   }
   function release(event) {
+    if (event?.button === 2) { rightRelease(event); return; }
     if (event?.pointerId !== undefined && pointerId !== null && event.pointerId !== pointerId) return;
     update();
     gameplay.endPet();
@@ -575,6 +644,14 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     if (event?.pointerType === 'touch' || event?.type === 'pointercancel') pointerPosition = null;
     syncHand();
   }
+  function rightRelease(event) {
+    if (event?.button !== 2 && event?.type !== 'pointercancel') return;
+    update();
+    rightDown = false;
+    rightPressedAt = -Infinity;
+    syncHand();
+  }
+  function blockContextMenu(event) { event.preventDefault(); }
   function pointerLeave() {
     update();
     pointerPosition = null;
@@ -583,11 +660,13 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     syncHand();
   }
   function loseFocus() {
+    rightDown = false; rightPressedAt = -Infinity;
     release();
     pointerPosition = null;
     syncHand();
   }
   function visibilityChanged() {
+    rightDown = false; rightPressedAt = -Infinity;
     release();
     paused = document.hidden;
     if (paused) pointerPosition = null;
@@ -601,6 +680,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
   canvas.addEventListener('pointerup', release);
   canvas.addEventListener('pointercancel', release);
   canvas.addEventListener('lostpointercapture', release);
+  canvas.addEventListener('contextmenu', blockContextMenu);
+  window.addEventListener('pointerup', rightRelease);
+  window.addEventListener('pointercancel', rightRelease);
   window.addEventListener('blur', loseFocus);
   document.addEventListener('visibilitychange', visibilityChanged);
 
@@ -660,6 +742,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
 
   function reset() {
     if (disposed) return;
+    rightDown = false; rightPressedAt = -Infinity;
+    carriedPose = null; carryAnchor = null; placeOrigin = null;
     release();
     gameplay.reset();
     peek = gameplay.inspect();
@@ -748,6 +832,9 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     canvas.removeEventListener('pointerup', release);
     canvas.removeEventListener('pointercancel', release);
     canvas.removeEventListener('lostpointercapture', release);
+    canvas.removeEventListener('contextmenu', blockContextMenu);
+    window.removeEventListener('pointerup', rightRelease);
+    window.removeEventListener('pointercancel', rightRelease);
     canvas.removeEventListener('webglcontextlost', contextLost);
     window.removeEventListener('blur', loseFocus);
     hand.dispose();
@@ -759,6 +846,8 @@ export async function createGameScene(container, { onReady, onInteract, onAffect
     container.dataset.ready = 'false';
   }
   const api = { reset, dispose, inspectFit, inspectGame: () => ({ ...gameplay.inspect(), enjoy, paused,
+    rightDown, catchWindowMs, catching: rightDown && peek.phase !== 'caught',
+    catchScreenPoint: (() => { const p = projectedFoot(); return { x: (p.x + 1) * width / 2, y: (1 - p.y) * height / 2 - 3 }; })(),
     expression: container.dataset.expression,
     visibleHurtStrokes: parts.filter((part) => part.hurtStroke && part.mesh.visible).length,
     visibleOpenEyes: parts.filter((part) => part.closed && part.mesh.visible).length,

@@ -94,10 +94,10 @@ test('jump phases cannot be petted and only the fully airborne phase accepts a c
     f.finishPhase();
   }
   assert.equal(f.game.hitAirborne(), false);
-  assert.equal(f.game.inspect().affection, 20);
+  assert.equal(f.game.inspect().affection, 10);
 });
 
-test('hover collision costs 30 once per jump without changing flight timing or pet state', () => {
+test('a left click costs 30 once per jump without changing flight timing or pet state', () => {
   const f = fixture();
   f.earn(50);
   f.start(1);
@@ -162,13 +162,13 @@ test('hurt expression begins on collision, lasts through landing and clears befo
   assert.equal(f.game.inspect().hurt, false);
 });
 
-test('no collision preserves affection throughout the jump and never credits a stale hold', () => {
+test('an uncaught jump costs ten at landing and never credits a stale hold', () => {
   const f = fixture();
   f.earn(40);
   f.start(1);
   f.game.advance(.85 + defaultMotion.totalDuration);
   assert.equal(f.game.inspect().phase, 'hidden');
-  assert.equal(f.game.inspect().affection, 40);
+  assert.equal(f.game.inspect().affection, 30);
   assert.equal(f.game.inspect().holding, false);
   assert.equal(f.game.inspect().penalized, false);
   assert.equal(f.game.inspect().hurt, false);
@@ -290,17 +290,19 @@ for (const phase of ['charging', 'launching', 'flying', 'landing']) {
   });
 }
 
-test('after a jump, normal petting can still trigger the finale at exactly 100 points', () => {
+test('after a missed jump, normal petting can still trigger the finale at exactly 200 points', () => {
   const f = fixture();
   f.earn(50);
+  f.earn(50, 1);
+  f.earn(50, 0);
   f.start(1);
   f.game.advance(.85 + defaultMotion.totalDuration);
   f.start(0, 'peek');
   f.finishPhase();
   f.game.beginPet();
-  f.game.advance(2.5);
+  f.game.advance(3);
   assert.equal(f.game.inspect().phase, 'celebrating');
-  assert.equal(f.game.inspect().affection, 100);
+  assert.equal(f.game.inspect().affection, 200);
   assert.equal(f.game.hitAirborne(), false);
   f.game.advance(4.6 + 1.1);
   assert.equal(f.game.inspect().phase, 'hidden');
